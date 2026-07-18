@@ -12,6 +12,7 @@ The platform also supports an isolated dual-account paper workflow: a slower
 Daily V4 account and a separate 15-minute Intra V1 account with independent
 Alpaca credentials, state, risk limits, and performance logs. See
 `DUAL_ACCOUNT_PAPER.md` for the proposed allocation and exact commands.
+Long-horizon intraday findings are recorded in `LONG_INTRADAY_RESEARCH.md`.
 
 ## What is included
 

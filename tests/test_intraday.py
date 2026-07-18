@@ -5,7 +5,11 @@ import pytest
 
 from project_geld.config import BacktestConfig, RiskConfig, load_config, validate_config
 from project_geld.credentials import alpaca_environment_names, load_alpaca_credentials
-from project_geld.intraday import resample_intraday_bars, run_intraday_backtest
+from project_geld.intraday import (
+    label_native_intraday_bar_ends,
+    resample_intraday_bars,
+    run_intraday_backtest,
+)
 from project_geld.strategies.intra_v1 import IntraV1
 from project_geld.strategies.intra_v2 import IntraV2
 from project_geld.strategies.intra_v3 import IntraV3
@@ -79,6 +83,27 @@ def test_minute_resampling_labels_bar_end_and_drops_partial_bar():
         & bars["symbol"].eq("AAPL")
     ].iloc[0]
     assert first["volume"] == 1_500_000
+
+
+def test_native_intraday_bars_are_shifted_from_start_to_end():
+    native = pd.DataFrame(
+        {
+            "timestamp": pd.to_datetime(
+                ["2026-07-13 13:30", "2026-07-13 19:45"], utc=True
+            ),
+            "symbol": ["AAPL", "AAPL"],
+            "open": [100, 101],
+            "high": [101, 102],
+            "low": [99, 100],
+            "close": [100.5, 101.5],
+            "volume": [1_000_000, 1_000_000],
+        }
+    )
+    labeled = label_native_intraday_bar_ends(native, 15)
+    assert labeled["timestamp"].tolist() == [
+        pd.Timestamp("2026-07-13 13:45", tz="UTC"),
+        pd.Timestamp("2026-07-13 20:00", tz="UTC"),
+    ]
 
 
 def test_intraday_strategy_enters_after_start_and_flattens():

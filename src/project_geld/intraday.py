@@ -63,6 +63,29 @@ def resample_intraday_bars(
     return normalize_bars(result[BAR_COLUMNS])
 
 
+def label_native_intraday_bar_ends(
+    bars: pd.DataFrame,
+    minutes: int,
+    timezone: str = "America/New_York",
+) -> pd.DataFrame:
+    """Convert Alpaca native intraday bar-start timestamps to bar-end timestamps."""
+    if minutes not in {1, 5, 10, 15, 30, 60}:
+        raise ValueError("minutes must be one of 1, 5, 10, 15, 30, 60.")
+    frame = normalize_bars(bars)
+    if frame.empty:
+        return frame
+    local = frame["timestamp"].dt.tz_convert(timezone)
+    minute_of_day = local.dt.hour * 60 + local.dt.minute
+    frame = frame[minute_of_day.between(570, 959)].copy()
+    local = frame["timestamp"].dt.tz_convert(timezone) + pd.Timedelta(
+        minutes, unit="m"
+    )
+    end_minute = local.dt.hour * 60 + local.dt.minute
+    frame = frame[end_minute.le(960)].copy()
+    frame["timestamp"] = local[end_minute.le(960)].dt.tz_convert("UTC")
+    return normalize_bars(frame)
+
+
 def run_intraday_backtest(
     bars: pd.DataFrame,
     strategy: Strategy,

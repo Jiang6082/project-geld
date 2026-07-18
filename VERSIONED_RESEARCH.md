@@ -79,3 +79,7 @@ no name qualified on 28 days, the median was one name, the mean was 1.85 names
 0.60% dislocation and VWAP filters—not the eight-name ceiling—usually determine
 capital usage. V3 is retained as requested but does not replace V2 based on this
 diagnostic.
+
+The later multi-year test in `LONG_INTRADAY_RESEARCH.md` supersedes this short
+diagnostic for strategy decisions. Both V2 and V3 lose money from July 2020 to
+July 2026 even before modeled slippage, so neither is approved for submission.

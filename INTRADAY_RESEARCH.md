@@ -14,6 +14,9 @@
 This is a short, already-inspected period. It is useful for engineering and
 candidate rejection, not as proof of durable alpha.
 
+Longer July 2020–July 2026 results now reject both Intra V2 and Intra V3. See
+`LONG_INTRADAY_RESEARCH.md`; those results supersede the short-period positives.
+
 ## Rejected first candidate
 
 The first candidate repeatedly ranked short-horizon relative winners. At an

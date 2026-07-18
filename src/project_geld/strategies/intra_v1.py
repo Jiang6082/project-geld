@@ -68,7 +68,9 @@ class IntraV1:
             raise ValueError(f"{self.benchmark_symbol} bars are required as context.")
         local_index = close.index.tz_convert(self.timezone)
         sessions = pd.Series(local_index.date, index=close.index)
-        returns = close.groupby(sessions).pct_change(self.lookback_bars)
+        returns = close.groupby(sessions).pct_change(
+            self.lookback_bars, fill_method=None
+        )
         benchmark_return = returns[self.benchmark_symbol]
         relative = returns.sub(benchmark_return, axis=0)
 

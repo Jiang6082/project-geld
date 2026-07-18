@@ -20,6 +20,7 @@ from project_geld.data import (
 from project_geld.experiments import grid_search, save_experiment
 from project_geld.intraday import (
     intraday_cycle_due,
+    label_native_intraday_bar_ends,
     mark_intraday_cycle,
     resample_intraday_bars,
     run_intraday_backtest,
@@ -250,12 +251,25 @@ def command_intraday_backtest(args) -> None:
     if not strategy.name.startswith("intra_v"):
         raise ValueError("intraday-backtest requires an intraday strategy config.")
     context = _strategy_context(strategy)
-    one_minute = _load_bars(args, config, context, timeframe="1Min")
-    bars = resample_intraday_bars(
-        one_minute,
-        config.intraday.bar_minutes,
-        config.backtest.session_timezone,
-    )
+    if args.native_bars:
+        native = _load_bars(
+            args,
+            config,
+            context,
+            timeframe=f"{config.intraday.bar_minutes}Min",
+        )
+        bars = label_native_intraday_bar_ends(
+            native,
+            config.intraday.bar_minutes,
+            config.backtest.session_timezone,
+        )
+    else:
+        one_minute = _load_bars(args, config, context, timeframe="1Min")
+        bars = resample_intraday_bars(
+            one_minute,
+            config.intraday.bar_minutes,
+            config.backtest.session_timezone,
+        )
     result = run_intraday_backtest(
         bars,
         strategy,
@@ -378,6 +392,11 @@ def build_parser() -> argparse.ArgumentParser:
     intraday_backtest.add_argument("--start")
     intraday_backtest.add_argument("--end")
     intraday_backtest.add_argument("--output", default="artifacts/intraday-backtest")
+    intraday_backtest.add_argument(
+        "--native-bars",
+        action="store_true",
+        help="Fetch native Alpaca intraday bars instead of aggregating one-minute bars",
+    )
     intraday_backtest.set_defaults(func=command_intraday_backtest)
 
     intraday_paper = subparsers.add_parser("intraday-paper-once")

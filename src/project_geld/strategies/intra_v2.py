@@ -68,8 +68,10 @@ class IntraV2:
         ).pivot(index="timestamp", columns="symbol", values="typical").reindex_like(close)
         local_index = close.index.tz_convert(self.timezone)
         sessions = pd.Series(local_index.date, index=close.index)
-        horizon_return = close.groupby(sessions).pct_change(self.lookback_bars)
-        one_bar_return = close.groupby(sessions).pct_change()
+        horizon_return = close.groupby(sessions).pct_change(
+            self.lookback_bars, fill_method=None
+        )
+        one_bar_return = close.groupby(sessions).pct_change(fill_method=None)
         relative = horizon_return.sub(horizon_return[self.benchmark_symbol], axis=0)
         cumulative_value = (typical * volume).groupby(sessions).cumsum()
         cumulative_volume = volume.groupby(sessions).cumsum().replace(0, np.nan)

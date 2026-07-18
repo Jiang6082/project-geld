@@ -129,13 +129,18 @@ class AlpacaBarSource:
     ) -> pd.DataFrame:
         from alpaca.data.enums import Adjustment, DataFeed
         from alpaca.data.requests import StockBarsRequest
-        from alpaca.data.timeframe import TimeFrame
+        from alpaca.data.timeframe import TimeFrame, TimeFrameUnit
 
         timeframe_map = {
             "1day": TimeFrame.Day,
             "day": TimeFrame.Day,
             "1min": TimeFrame.Minute,
             "minute": TimeFrame.Minute,
+            "5min": TimeFrame(5, TimeFrameUnit.Minute),
+            "10min": TimeFrame(10, TimeFrameUnit.Minute),
+            "15min": TimeFrame(15, TimeFrameUnit.Minute),
+            "30min": TimeFrame(30, TimeFrameUnit.Minute),
+            "60min": TimeFrame.Hour,
         }
         adjustment_map = {
             "all": Adjustment.ALL,
