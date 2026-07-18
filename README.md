@@ -29,6 +29,7 @@ Alpaca credentials, state, risk limits, and performance logs. See
   - `daily_v5`, its benchmark-aware challenger;
   - `intra_v1`, the 15-minute intraday control;
   - `intra_v2`, a lower-turnover selective intraday challenger.
+  - `intra_v3`, an eight-name/80%-gross allocation experiment.
 - Next-session-open backtests, avoiding same-close look-ahead fills.
 - Configurable slippage, per-share fees, fractional shares, and rebalance cadence.
 - Gross-exposure and per-position limits.

@@ -1,12 +1,14 @@
 from datetime import datetime, timezone
 
 import pandas as pd
+import pytest
 
 from project_geld.config import BacktestConfig, RiskConfig, load_config, validate_config
 from project_geld.credentials import alpaca_environment_names, load_alpaca_credentials
 from project_geld.intraday import resample_intraday_bars, run_intraday_backtest
 from project_geld.strategies.intra_v1 import IntraV1
 from project_geld.strategies.intra_v2 import IntraV2
+from project_geld.strategies.intra_v3 import IntraV3
 
 
 def minute_bars() -> pd.DataFrame:
@@ -57,6 +59,12 @@ def test_separate_account_configs_load():
     assert intra_v2.strategy.name == "intra_v2"
     assert not daily_v5.paper.enabled
     assert not intra_v2.paper.enabled
+    intra_v3 = load_config("configs/research-intra-v3.toml")
+    validate_config(intra_v3)
+    assert intra_v3.strategy.name == "intra_v3"
+    assert intra_v3.strategy.parameters["top_n"] == 8
+    assert intra_v3.risk.max_gross_exposure == 0.80
+    assert not intra_v3.paper.enabled
 
 
 def test_minute_resampling_labels_bar_end_and_drops_partial_bar():
@@ -143,6 +151,39 @@ def test_intra_v2_waits_for_recovery_and_enters_once():
     assert aapl.loc[timestamps[4], "target_weight"] == 0.5
     assert aapl.loc[timestamps[5], "target_weight"] == 0.5
     assert aapl.loc[timestamps[6], "target_weight"] == 0.0
+
+
+def test_intra_v3_ranks_and_caps_eight_qualifying_names():
+    local_times = ["09:30", "09:45", "10:00", "10:15", "10:30", "15:45"]
+    timestamps = [
+        pd.Timestamp(f"2026-07-13 {value}", tz="America/New_York").tz_convert("UTC")
+        for value in local_times
+    ]
+    rows = []
+    series = {"SPY": [100, 100.1, 100.2, 100.3, 100.4, 100.5]}
+    for index in range(10):
+        series[f"S{index}"] = [101, 100.5, 100, 99, 98 - index * 0.1, 99]
+    for symbol, closes in series.items():
+        for timestamp, close in zip(timestamps, closes):
+            rows.append(
+                {
+                    "timestamp": timestamp,
+                    "symbol": symbol,
+                    "open": close,
+                    "high": close,
+                    "low": close,
+                    "close": close,
+                    "volume": 2_000_000,
+                }
+            )
+    strategy = IntraV3()
+    targets = strategy.generate_targets(pd.DataFrame(rows))
+    entry = targets[targets["timestamp"].eq(timestamps[4])]
+    selected = entry[entry["target_weight"].gt(0)]
+    assert len(selected) == 8
+    assert selected["target_weight"].eq(0.10).all()
+    assert selected["target_weight"].sum() == pytest.approx(0.80)
+    assert set(selected["symbol"]) == {f"S{index}" for index in range(2, 10)}
 
 
 class AlwaysIntradayLong:

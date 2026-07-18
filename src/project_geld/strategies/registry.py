@@ -12,6 +12,7 @@ from project_geld.strategies.trend import TrendStrength
 from project_geld.strategies.intra_v1 import IntraV1
 from project_geld.strategies.daily_v5 import DailyV5
 from project_geld.strategies.intra_v2 import IntraV2
+from project_geld.strategies.intra_v3 import IntraV3
 
 
 STRATEGIES = {
@@ -25,6 +26,7 @@ STRATEGIES = {
     "mean_reversion": LongOnlyMeanReversion,
     "intra_v1": IntraV1,
     "intra_v2": IntraV2,
+    "intra_v3": IntraV3,
     "intraday_momentum": IntraV1,
 }
 

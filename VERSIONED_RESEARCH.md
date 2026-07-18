@@ -6,6 +6,7 @@ Canonical production-facing names use the trading horizon followed by a version:
 - `daily_v5`: benchmark-aware Daily V4 challenger.
 - `intra_v1`: current 15-minute relative-reversal control.
 - `intra_v2`: selective once-daily relative-reversal challenger.
+- `intra_v3`: broader V2 allocation with eight 10% name slots and 80% maximum gross.
 
 The old registry names `momentum_v4` and `intraday_momentum` remain aliases so
 old notebooks do not break. New configs and artifacts must use canonical names.
@@ -55,3 +56,26 @@ approved to replace Intra V1 or submit orders.
 At two bps, Intra V2 returned 4.63% over the full period and 0.16% in the later
 test. This narrow execution margin is why limit prices, missed-fill tracking,
 and a longer shadow sample are mandatory.
+
+## Intra V3 allocation experiment
+
+Intra V3 preserves V2's signal and changes only the allocation ceiling: up to
+eight names, 10% per name, and 80% gross exposure. At 10:30 it ranks eligible
+names by `SPY two-bar return - stock two-bar return`. Eligibility requires at
+least $1 million of latest-bar dollar volume, a stock below its session VWAP,
+at least 0.60% underperformance versus SPY, and SPY above its own session VWAP.
+
+| 8-bps result | Intra V2 | Intra V3 |
+|---|---:|---:|
+| Full-period return | 2.78% | 1.74% |
+| Full-period Sharpe | 1.118 | 0.914 |
+| Maximum drawdown | -3.08% | -2.22% |
+| Annual turnover | 103.7x | 93.8x |
+| Later-test return | -0.63% | -0.84% |
+
+The broader cap did not increase realized exposure much. Across 74 sessions,
+no name qualified on 28 days, the median was one name, the mean was 1.85 names
+(18.5% entry gross), and all eight slots filled on only one day. Therefore the
+0.60% dislocation and VWAP filters—not the eight-name ceiling—usually determine
+capital usage. V3 is retained as requested but does not replace V2 based on this
+diagnostic.
