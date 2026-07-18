@@ -13,6 +13,9 @@ from project_geld.intraday import (
 from project_geld.strategies.intra_v1 import IntraV1
 from project_geld.strategies.intra_v2 import IntraV2
 from project_geld.strategies.intra_v3 import IntraV3
+from project_geld.strategies.intra_v4 import IntraV4
+from project_geld.strategies.intra_v5 import IntraV5
+from project_geld.strategies.intra_v6 import IntraV6
 
 
 def minute_bars() -> pd.DataFrame:
@@ -69,6 +72,22 @@ def test_separate_account_configs_load():
     assert intra_v3.strategy.parameters["top_n"] == 8
     assert intra_v3.risk.max_gross_exposure == 0.80
     assert not intra_v3.paper.enabled
+    intra_v4 = load_config("configs/research-intra-v4.toml")
+    validate_config(intra_v4)
+    assert intra_v4.strategy.name == "intra_v4"
+    assert intra_v4.strategy.parameters["top_n"] == 8
+    assert intra_v4.risk.max_gross_exposure == 0.80
+    assert not intra_v4.paper.enabled
+    intra_v5 = load_config("configs/research-intra-v5.toml")
+    validate_config(intra_v5)
+    assert intra_v5.strategy.name == "intra_v5"
+    assert intra_v5.strategy.parameters["confirmation_bars"] == 1
+    assert not intra_v5.paper.enabled
+    intra_v6 = load_config("configs/research-intra-v6.toml")
+    validate_config(intra_v6)
+    assert intra_v6.strategy.name == "intra_v6"
+    assert intra_v6.strategy.parameters["min_relative_dislocation"] == 0.01
+    assert not intra_v6.paper.enabled
 
 
 def test_minute_resampling_labels_bar_end_and_drops_partial_bar():
@@ -209,6 +228,87 @@ def test_intra_v3_ranks_and_caps_eight_qualifying_names():
     assert selected["target_weight"].eq(0.10).all()
     assert selected["target_weight"].sum() == pytest.approx(0.80)
     assert set(selected["symbol"]) == {f"S{index}" for index in range(2, 10)}
+
+
+def test_intra_v4_selects_strongest_eight_relative_winners():
+    local_times = ["09:30", "09:45", "10:00", "10:15", "10:30", "15:45"]
+    timestamps = [
+        pd.Timestamp(f"2026-07-13 {value}", tz="America/New_York").tz_convert("UTC")
+        for value in local_times
+    ]
+    rows = []
+    series = {"SPY": [100, 100.1, 100.2, 100.3, 100.4, 100.5]}
+    for index in range(10):
+        series[f"S{index}"] = [99, 99.5, 100, 101, 102 + index * 0.1, 101]
+    for symbol, closes in series.items():
+        for timestamp, close in zip(timestamps, closes):
+            rows.append(
+                {
+                    "timestamp": timestamp,
+                    "symbol": symbol,
+                    "open": close,
+                    "high": close,
+                    "low": close,
+                    "close": close,
+                    "volume": 2_000_000,
+                }
+            )
+    strategy = IntraV4(require_benchmark_above_vwap=False)
+    targets = strategy.generate_targets(pd.DataFrame(rows))
+    entry = targets[targets["timestamp"].eq(timestamps[4])]
+    selected = entry[entry["target_weight"].gt(0)]
+    assert len(selected) == 8
+    assert selected["target_weight"].eq(0.10).all()
+    assert selected["target_weight"].sum() == pytest.approx(0.80)
+    assert set(selected["symbol"]) == {f"S{index}" for index in range(2, 10)}
+
+
+def test_intra_v5_waits_for_a_break_above_the_signal_bar_high():
+    local_times = ["09:30", "09:45", "10:00", "10:15", "10:30", "10:45", "11:00", "15:45"]
+    timestamps = [
+        pd.Timestamp(f"2026-07-13 {value}", tz="America/New_York").tz_convert("UTC")
+        for value in local_times
+    ]
+    rows = []
+    series = {
+        "SPY": [100, 100.1, 100.2, 100.3, 100.4, 100.5, 100.6, 100.7],
+        "RECOVERS": [100, 99, 98, 97, 96, 97, 98, 99],
+        "FALLS": [100, 99, 98, 97, 96, 95, 94, 93],
+    }
+    for symbol, closes in series.items():
+        for timestamp, close in zip(timestamps, closes):
+            rows.append(
+                {
+                    "timestamp": timestamp,
+                    "symbol": symbol,
+                    "open": close,
+                    "high": close + (0.2 if symbol != "RECOVERS" else 0.0),
+                    "low": close - 0.2,
+                    "close": close,
+                    "volume": 2_000_000,
+                }
+            )
+    strategy = IntraV5(
+        top_n=1,
+        gross_exposure=0.5,
+        max_position_weight=0.5,
+        min_relative_dislocation=0.003,
+        require_benchmark_above_vwap=False,
+    )
+    targets = strategy.generate_targets(pd.DataFrame(rows))
+    signal = targets[targets["timestamp"].eq(timestamps[4])]
+    confirmation = targets[targets["timestamp"].eq(timestamps[5])]
+    flatten = targets[targets["timestamp"].eq(timestamps[7])]
+    assert signal["target_weight"].eq(0).all()
+    assert confirmation.set_index("symbol").at["RECOVERS", "target_weight"] == 0.5
+    assert confirmation.set_index("symbol").at["FALLS", "target_weight"] == 0.0
+    assert flatten["target_weight"].eq(0).all()
+
+
+def test_intra_v6_uses_the_stricter_dislocation_threshold():
+    strategy = IntraV6()
+    assert strategy.min_relative_dislocation == 0.01
+    assert strategy.name == "intra_v6"
 
 
 class AlwaysIntradayLong:

@@ -83,3 +83,61 @@ Neither Intra V2 nor Intra V3 should submit paper orders in its current form.
 V3 remains implemented as an allocation experiment, but a subsequent strategy
 should change the signal itself—such as requiring a genuine recovery pattern or
 testing continuation—rather than merely increasing position limits.
+
+## V4 through V6 follow-up
+
+Three subsequent versions changed signal quality while preserving the requested
+ceiling of eight names, 10% per name, and 80% gross exposure:
+
+- V4 bought 10:30 relative winners above VWAP to test continuation.
+- V5 marked 0.60% relative laggards at 10:30, waited one 15-minute bar, and
+  entered only after a close above the original signal bar's high.
+- V6 made the V5 setup more selective by requiring a 1.00% relative lag.
+
+All signals execute no earlier than the following 15-minute bar. All versions
+flatten before the session ends. Research configurations remain paper-disabled.
+
+| Strategy, 8 bps one way | Total return | CAGR | Sharpe | Max drawdown | Annual turnover | Orders |
+|---|---:|---:|---:|---:|---:|---:|
+| Intra V3 | -20.83% | -3.84% | -0.907 | -23.08% | 37.22x | 2,294 |
+| Intra V4 | -33.07% | -6.50% | -0.877 | -35.22% | 70.80x | 4,407 |
+| Intra V5 | -3.04% | -0.52% | -0.321 | -4.32% | 8.64x | 529 |
+| Intra V6 | -0.37% | -0.06% | -0.066 | -1.86% | 2.21x | 142 |
+| SPY buy and hold | 152.36% | — | — | — | — | — |
+
+V4's zero-cost return is -5.31%, so reversing the signal direction does not
+solve the problem. V5's confirmation step cuts activity and turns its zero-cost
+result slightly positive at 1.02%, but eight-basis-point costs still produce a
+loss. V6 has the following full cost curve:
+
+| One-way slippage | Total return | Sharpe | Max drawdown | Annual turnover |
+|---:|---:|---:|---:|---:|
+| 0 bps | 0.69% | 0.133 | -1.63% | 2.22x |
+| 2 bps | 0.42% | 0.083 | -1.69% | 2.22x |
+| 4 bps | 0.16% | 0.034 | -1.75% | 2.22x |
+| 8 bps | -0.37% | -0.066 | -1.86% | 2.21x |
+
+V6 is sparse: it has exposure on 61 sessions and 66 completed day-symbol
+positions. Its maximum realized gross exposure is about 20.7%, far below the
+80% ceiling, and 20 of those positions are COIN. At eight bps the median trade
+return is about -0.05% and the win rate is 47.0%. Calendar returns are positive
+in 2022, 2023, 2025, and partial 2026, but negative in partial 2020, 2021, and
+2024. This is neither broad nor stable enough to claim a durable edge.
+
+## Updated decision
+
+V6 is the best intraday research version so far because genuine recovery and
+greater selectivity largely remove the V3/V4 losses. It still does not beat cash
+after conservative costs, has only a small number of trades, and was chosen from
+an already-inspected fixed-universe sample. It therefore remains a research
+challenger, not a paper-order strategy. The next evidence should come from a
+locked, forward shadow period with recorded bid/ask spreads and simulated or
+observed limit-fill rates, rather than more threshold tuning on this history.
+
+Reproduce the final studies with:
+
+```powershell
+geld --config configs/research-intra-v6.toml intraday-backtest --source alpaca --native-bars --start 2016-01-01 --end 2026-07-18 --output artifacts/research-intra-v6-2016-2026
+python scripts/intraday_cost_stress.py --config configs/research-intra-v6.toml --bars data/cache/intraday/bars_61fe7c2756358b2e.csv --output artifacts/research-intra-v6-cost-stress
+python scripts/intraday_v5_research.py --config configs/research-intra-v5.toml --bars data/cache/intraday/bars_61fe7c2756358b2e.csv --output artifacts/research-intra-v5-variants
+```

@@ -16,6 +16,9 @@ candidate rejection, not as proof of durable alpha.
 
 Longer July 2020–July 2026 results now reject both Intra V2 and Intra V3. See
 `LONG_INTRADAY_RESEARCH.md`; those results supersede the short-period positives.
+The subsequent V4 continuation test also failed. Confirmation and a stricter
+threshold reduce the loss materially in V5/V6, but no version remains positive
+under the conservative eight-basis-point cost model.
 
 ## Rejected first candidate
 
@@ -50,6 +53,8 @@ The intraday account has a configurable 70% maximum gross exposure, but this is
 a ceiling rather than an approved deployment target. Start with dry planning,
 then shadow paper. Increase actual paper utilization only if fill-adjusted
 results remain positive and the later paper sample improves on cash after costs.
+As of the long-history V6 study, the prerequisite is not met. V6 is research-only
+and its configuration keeps `paper.enabled = false`.
 
 ## Swing allocation diagnostic
 

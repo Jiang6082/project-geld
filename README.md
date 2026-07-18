@@ -31,6 +31,9 @@ Long-horizon intraday findings are recorded in `LONG_INTRADAY_RESEARCH.md`.
   - `intra_v1`, the 15-minute intraday control;
   - `intra_v2`, a lower-turnover selective intraday challenger.
   - `intra_v3`, an eight-name/80%-gross allocation experiment.
+  - `intra_v4`, a rejected relative-continuation experiment;
+  - `intra_v5`, delayed recovery confirmation;
+  - `intra_v6`, a research-only selective confirmed-reversal challenger.
 - Next-session-open backtests, avoiding same-close look-ahead fills.
 - Configurable slippage, per-share fees, fractional shares, and rebalance cadence.
 - Gross-exposure and per-position limits.
@@ -184,9 +187,9 @@ order idempotency inputs, and the daily-loss guard.
 
 ## Current scope
 
-Version 0.1 is daily-bar and long-only. Momentum V2 can accept point-in-time
+Version 0.1 is long-only and supports daily and intraday research. Momentum V2 can accept point-in-time
 membership periods for survivorship stress tests. The engine does not yet
-implement borrow/shorting, intraday event simulation, factor attribution, a
+implement borrow/shorting, tick/order-book event simulation, factor attribution, a
 distributed experiment scheduler, or a persistent paper daemon. Those are
 appropriate later phases after the daily research loop is trusted.
 

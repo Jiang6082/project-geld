@@ -7,6 +7,9 @@ Canonical production-facing names use the trading horizon followed by a version:
 - `intra_v1`: current 15-minute relative-reversal control.
 - `intra_v2`: selective once-daily relative-reversal challenger.
 - `intra_v3`: broader V2 allocation with eight 10% name slots and 80% maximum gross.
+- `intra_v4`: relative-continuation test using V3's allocation controls; rejected.
+- `intra_v5`: delayed recovery confirmation after a 0.60% relative dislocation.
+- `intra_v6`: stricter confirmed reversal requiring a 1.00% relative dislocation.
 
 The old registry names `momentum_v4` and `intraday_momentum` remain aliases so
 old notebooks do not break. New configs and artifacts must use canonical names.
@@ -83,3 +86,23 @@ diagnostic.
 The later multi-year test in `LONG_INTRADAY_RESEARCH.md` supersedes this short
 diagnostic for strategy decisions. Both V2 and V3 lose money from July 2020 to
 July 2026 even before modeled slippage, so neither is approved for submission.
+
+## Intra V4 through V6 long-history follow-up
+
+The same native 15-minute IEX dataset was used from July 27, 2020 through July
+17, 2026. V4 tested the opposite direction and bought morning relative winners;
+it also lost money before costs. V5 returned to reversal but waited one bar and
+required the stock to close above the original signal bar's high. V6 made that
+confirmed setup rarer by raising the required dislocation from 0.60% to 1.00%.
+
+| Strategy, 8 bps one way | Total return | Sharpe | Max drawdown | Annual turnover | Orders |
+|---|---:|---:|---:|---:|---:|
+| Intra V3 | -20.83% | -0.907 | -23.08% | 37.22x | 2,294 |
+| Intra V4 | -33.07% | -0.877 | -35.22% | 70.80x | 4,407 |
+| Intra V5 | -3.04% | -0.321 | -4.32% | 8.64x | 529 |
+| Intra V6 | -0.37% | -0.066 | -1.86% | 2.21x | 142 |
+
+V6 is a substantial rejection-quality improvement, not demonstrated alpha. It
+earns only 0.69% total before costs, turns negative at eight bps, trades on 61
+sessions, and remains paper-disabled. The small grid that produced V6 used this
+same history, so the result is in-sample and requires new forward evidence.
