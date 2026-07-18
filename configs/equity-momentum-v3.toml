@@ -1,0 +1,66 @@
+[universe]
+symbols = [
+  "AAPL", "MSFT", "NVDA", "AVGO", "ORCL", "CRM",
+  "META", "GOOGL", "NFLX",
+  "AMZN", "TSLA", "HD", "MCD", "NKE",
+  "WMT", "COST", "PG", "KO", "PEP",
+  "JPM", "BAC", "GS", "V", "MA",
+  "UNH", "JNJ", "LLY", "ABBV", "MRK",
+  "XOM", "CVX", "CAT", "GE", "HON",
+]
+benchmark = "SPY"
+
+[data]
+feed = "iex"
+adjustment = "all"
+cache_dir = "data/cache"
+
+[strategy]
+name = "momentum_v3"
+
+[strategy.parameters]
+benchmark_symbol = "SPY"
+formation_lookback = 252
+medium_lookback = 126
+skip_recent = 21
+beta_lookback = 126
+volatility_lookback = 60
+correlation_lookback = 126
+fast_window = 50
+slow_window = 200
+max_symbols = 40
+exit_rank = 80
+max_position_weight = 0.04
+maximum_annualized_volatility = 0.60
+max_pairwise_correlation = 0.85
+target_portfolio_volatility = 0.15
+max_per_sector = 8
+rebalance_every = 21
+bullish_exposure = 1.0
+mixed_exposure = 0.75
+bearish_exposure = 0.25
+breadth_threshold = 0.50
+regime_enabled = true
+
+[backtest]
+initial_cash = 100000.0
+slippage_bps = 10.0
+commission_per_share = 0.0
+allow_fractional = true
+rebalance_every = 21
+missing_price_exit_sessions = 5
+missing_price_haircut_pct = 0.0
+
+[risk]
+max_gross_exposure = 1.0
+max_position_weight = 0.04
+max_order_notional = 100.0
+min_trade_notional = 10.0
+max_daily_loss_pct = 0.02
+
+[paper]
+enabled = false
+lookback_days = 500
+client_order_prefix = "geldv3"
+rebalance_every_sessions = 21
+state_file = "artifacts/paper-v3/rebalance_state.json"

@@ -1,0 +1,49 @@
+[universe]
+symbols = [
+  "SPY",
+  "XLB",
+  "XLC",
+  "XLE",
+  "XLF",
+  "XLI",
+  "XLK",
+  "XLP",
+  "XLRE",
+  "XLU",
+  "XLV",
+  "XLY",
+]
+benchmark = "SPY"
+
+[data]
+feed = "iex"
+adjustment = "all"
+cache_dir = "data/cache"
+
+[strategy]
+name = "momentum"
+
+[strategy.parameters]
+lookback = 126
+volatility_lookback = 60
+top_n = 3
+gross_exposure = 0.90
+
+[backtest]
+initial_cash = 100000.0
+slippage_bps = 10.0
+commission_per_share = 0.0
+allow_fractional = true
+rebalance_every = 5
+
+[risk]
+max_gross_exposure = 1.0
+max_position_weight = 0.35
+max_order_notional = 20000.0
+min_trade_notional = 50.0
+max_daily_loss_pct = 0.02
+
+[paper]
+enabled = false
+lookback_days = 400
+client_order_prefix = "geld"

@@ -1,0 +1,89 @@
+[universe]
+symbols = [
+  "AAPL", "MSFT", "NVDA", "AVGO", "ORCL", "CRM",
+  "META", "GOOGL", "NFLX",
+  "AMZN", "TSLA", "HD", "MCD", "NKE",
+  "WMT", "COST", "PG", "KO", "PEP",
+  "JPM", "BAC", "GS", "V", "MA",
+  "UNH", "JNJ", "LLY", "ABBV", "MRK",
+  "XOM", "CVX",
+  "CAT", "GE", "HON",
+]
+benchmark = "SPY"
+
+[data]
+feed = "iex"
+adjustment = "all"
+cache_dir = "data/cache"
+
+[strategy]
+name = "momentum_v2"
+
+[strategy.parameters]
+formation_lookback = 252
+skip_recent = 21
+volatility_lookback = 60
+fast_window = 50
+slow_window = 200
+max_symbols = 5
+exit_rank = 10
+gross_exposure = 0.75
+rebalance_every = 10
+max_per_sector = 2
+
+[strategy.parameters.sector_map]
+AAPL = "technology"
+MSFT = "technology"
+NVDA = "technology"
+AVGO = "technology"
+ORCL = "technology"
+CRM = "technology"
+META = "communication"
+GOOGL = "communication"
+NFLX = "communication"
+AMZN = "consumer_discretionary"
+TSLA = "consumer_discretionary"
+HD = "consumer_discretionary"
+MCD = "consumer_discretionary"
+NKE = "consumer_discretionary"
+WMT = "consumer_staples"
+COST = "consumer_staples"
+PG = "consumer_staples"
+KO = "consumer_staples"
+PEP = "consumer_staples"
+JPM = "financials"
+BAC = "financials"
+GS = "financials"
+V = "financials"
+MA = "financials"
+UNH = "health_care"
+JNJ = "health_care"
+LLY = "health_care"
+ABBV = "health_care"
+MRK = "health_care"
+XOM = "energy"
+CVX = "energy"
+CAT = "industrials"
+GE = "industrials"
+HON = "industrials"
+
+[backtest]
+initial_cash = 100000.0
+slippage_bps = 10.0
+commission_per_share = 0.0
+allow_fractional = true
+rebalance_every = 10
+
+[risk]
+max_gross_exposure = 0.80
+max_position_weight = 0.20
+max_order_notional = 100.0
+min_trade_notional = 10.0
+max_daily_loss_pct = 0.02
+
+[paper]
+enabled = true
+lookback_days = 500
+client_order_prefix = "geldv2"
+rebalance_every_sessions = 10
+state_file = "artifacts/paper-v2/rebalance_state.json"
