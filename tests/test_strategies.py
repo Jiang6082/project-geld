@@ -174,9 +174,9 @@ def test_momentum_v3_is_causal_under_future_price_change(synthetic_bars):
     )
 
 
-def test_momentum_v4_combines_core_and_capped_active_sleeve(synthetic_bars):
+def test_daily_v4_combines_core_and_capped_active_sleeve(synthetic_bars):
     strategy = create_strategy(
-        "momentum_v4",
+        "daily_v4",
         {
             "core_symbol": "SPY",
             "core_weight": 0.6,
@@ -234,7 +234,7 @@ def test_v4_external_features_are_filing_dated_and_benchmark_aware(
     path = tmp_path / "features.csv"
     pd.DataFrame(rows).to_csv(path, index=False)
     strategy = create_strategy(
-        "momentum_v4",
+        "daily_v4",
         {
             "core_weight": 0.75,
             "active_weight": 0.25,
@@ -265,3 +265,41 @@ def test_v4_external_features_are_filing_dated_and_benchmark_aware(
     assert weights["SPY"].eq(0.75).all()
     assert weights.drop(columns="SPY").sum(axis=1).le(0.250001).all()
     assert weights.drop(columns="SPY").max(axis=1).le(0.150001).all()
+
+
+def test_daily_v5_reduces_exposure_below_benchmark_trend(synthetic_bars):
+    strategy = create_strategy(
+        "daily_v5",
+        {
+            "core_weight": 0.4,
+            "active_weight": 0.6,
+            "active_name_cap": 0.3,
+            "rebalance_every": 5,
+            "core_trend_window": 15,
+            "core_volatility_window": 5,
+            "core_target_volatility": 10.0,
+            "bearish_core_multiplier": 0.5,
+            "bearish_active_multiplier": 0.5,
+            "active_parameters": {
+                "formation_lookback": 30,
+                "medium_lookback": 20,
+                "skip_recent": 5,
+                "beta_lookback": 20,
+                "volatility_lookback": 10,
+                "correlation_lookback": 20,
+                "fast_window": 5,
+                "slow_window": 15,
+                "max_symbols": 2,
+                "exit_rank": 4,
+                "maximum_annualized_volatility": 10.0,
+                "max_pairwise_correlation": 1.0,
+            },
+        },
+    )
+    targets = strategy.generate_targets(synthetic_bars)
+    weights = targets.pivot(index="timestamp", columns="symbol", values="target_weight")
+    spy = synthetic_bars[synthetic_bars["symbol"].eq("SPY")].set_index("timestamp")["close"]
+    bearish = spy.lt(spy.rolling(15).mean()).reindex(weights.index).fillna(False)
+    assert bearish.any()
+    assert weights.loc[bearish, "SPY"].eq(0.2).all()
+    assert weights.sum(axis=1).le(1.000001).all()

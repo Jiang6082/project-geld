@@ -14,7 +14,7 @@ def _clock(value: str) -> time:
 
 
 @dataclass
-class IntradayRelativeMomentum:
+class IntraV1:
     benchmark_symbol: str = "SPY"
     lookback_bars: int = 2
     top_n: int = 6
@@ -30,7 +30,7 @@ class IntradayRelativeMomentum:
     signal_mode: str = "momentum"
     require_stock_vwap_confirmation: bool = True
     timezone: str = "America/New_York"
-    name: str = "intraday_momentum"
+    name: str = "intra_v1"
 
     def __post_init__(self) -> None:
         self.benchmark_symbol = self.benchmark_symbol.upper()
@@ -143,3 +143,7 @@ class IntradayRelativeMomentum:
                     }
                 )
         return pd.DataFrame.from_records(records, columns=TARGET_COLUMNS)
+
+
+# Backward-compatible import for older research scripts and notebooks.
+IntradayRelativeMomentum = IntraV1

@@ -132,7 +132,7 @@ def main() -> None:
                 "residual_factor_symbols": variant["residual_factor_symbols"],
             },
         }
-        strategy = create_strategy("momentum_v4", parameters)
+        strategy = create_strategy("daily_v4", parameters)
         result = run_backtest(
             bars,
             strategy,
@@ -187,7 +187,7 @@ def main() -> None:
         [benchmark],
     )
     comparison = metrics[metrics["period"].eq("fixed_validation")].copy()
-    comparison["label"] = "momentum_v4_" + comparison["variant"]
+    comparison["label"] = "daily_v4_" + comparison["variant"]
     spy_row = {
         "label": "SPY_100pct_buy_hold",
         "variant": "benchmark",

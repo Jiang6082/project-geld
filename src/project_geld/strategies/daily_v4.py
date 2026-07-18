@@ -9,7 +9,7 @@ from project_geld.strategies.equity_momentum_v3 import EquityMomentumV3
 
 
 @dataclass(frozen=True)
-class CoreSatelliteMomentum:
+class DailyV4:
     """A stable index core plus a diversified residual-momentum stock sleeve."""
 
     core_symbol: str = "SPY"
@@ -19,7 +19,7 @@ class CoreSatelliteMomentum:
     no_trade_band: float = 0.0025
     rebalance_every: int = 21
     active_parameters: dict = field(default_factory=dict)
-    name: str = "momentum_v4"
+    name: str = "daily_v4"
 
     def __post_init__(self) -> None:
         if not 0 <= self.core_weight <= 1:
@@ -118,3 +118,7 @@ class CoreSatelliteMomentum:
                     }
                 )
         return pd.DataFrame(rows, columns=TARGET_COLUMNS)
+
+
+# Backward-compatible import for older research scripts and notebooks.
+CoreSatelliteMomentum = DailyV4

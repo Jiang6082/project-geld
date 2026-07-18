@@ -5,12 +5,14 @@ from dataclasses import replace
 
 from project_geld.config import PaperConfig, RiskConfig
 from project_geld.paper import (
+    AlpacaPaperBroker,
     AccountSnapshot,
     append_performance_snapshot,
     build_rebalance_orders,
     mark_paper_rebalance,
     paper_rebalance_due,
 )
+from project_geld.models import OrderIntent
 
 
 def targets():
@@ -69,7 +71,7 @@ def test_symbol_specific_position_and_order_limits_support_a_large_core():
         snapshot,
         risk,
         "geld",
-        "momentum_v4",
+        "daily_v4",
         pd.Timestamp("2025-01-02", tz="UTC"),
     )
     by_symbol = {order.symbol: order for order in orders}
@@ -88,7 +90,7 @@ def test_cash_buffer_scales_target_gross_and_buying_budget():
         AccountSnapshot(100_000, 100_000, {}, set(), cash=100_000),
         RiskConfig(max_position_weight=1.0, max_order_notional=100_000),
         "geld",
-        "momentum_v4",
+        "daily_v4",
         pd.Timestamp("2025-01-02", tz="UTC"),
         cash_buffer_pct=0.01,
     )
@@ -157,7 +159,7 @@ def test_equity_relative_no_trade_band_ignores_small_drift():
             min_trade_pct_equity=0.005,
         ),
         "geld",
-        "intraday_momentum",
+        "intra_v1",
         pd.Timestamp("2025-01-02", tz="UTC"),
     )
     assert not orders
@@ -170,7 +172,7 @@ def test_marketable_limit_plan_exposes_price_ceiling():
         AccountSnapshot(100_000, 100_000, {}, set(), cash=100_000),
         RiskConfig(max_position_weight=1.0, max_order_notional=100_000),
         "geld",
-        "intraday_momentum",
+        "intra_v1",
         pd.Timestamp("2025-01-02", tz="UTC"),
         execution_style="marketable_limit",
         limit_offset_bps=2.0,
@@ -180,6 +182,33 @@ def test_marketable_limit_plan_exposes_price_ceiling():
     assert by_symbol["AAPL"].notional == pytest.approx(
         by_symbol["AAPL"].quantity * 200.04
     )
+
+
+@pytest.mark.filterwarnings("ignore:websockets.legacy is deprecated:DeprecationWarning")
+def test_alpaca_adapter_constructs_limit_order_without_real_submission():
+    class FakeClient:
+        request = None
+
+        def submit_order(self, order_data):
+            self.request = order_data
+            return order_data
+
+    broker = object.__new__(AlpacaPaperBroker)
+    broker.client = FakeClient()
+    broker.submit(
+        OrderIntent(
+            symbol="AAPL",
+            side="buy",
+            quantity=1.5,
+            reference_price=100.0,
+            notional=150.03,
+            target_weight=0.1,
+            client_order_id="geld-test-limit",
+            limit_price=100.02,
+        )
+    )
+    assert float(broker.client.request.limit_price) == pytest.approx(100.02)
+    assert float(broker.client.request.qty) == pytest.approx(1.5)
 
 
 def test_performance_log_replaces_same_day_and_tracks_baseline(tmp_path):

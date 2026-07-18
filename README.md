@@ -9,7 +9,7 @@ This is research software, not investment advice. It is intentionally
 paper-only and has no live-trading mode.
 
 The platform also supports an isolated dual-account paper workflow: a slower
-V4 momentum account and a separate 15-minute intraday account with independent
+Daily V4 account and a separate 15-minute Intra V1 account with independent
 Alpaca credentials, state, risk limits, and performance logs. See
 `DUAL_ACCOUNT_PAPER.md` for the proposed allocation and exact commands.
 
@@ -19,13 +19,16 @@ Alpaca credentials, state, risk limits, and performance logs. See
 - Alpaca historical OHLCV ingestion with explicit feed and adjustment settings.
 - CSV and deterministic synthetic data sources.
 - Exact-request CSV caching for reproducible research runs.
-- Six strategy implementations:
+- Versioned daily and intraday strategy implementations, including:
   - cross-sectional momentum;
   - long-only trend strength;
   - regime-filtered short-term mean reversion.
   - buffered point-in-time Momentum V2;
   - market-residual, diversified Momentum V3.
-  - core-plus-alpha Momentum V4.
+  - `daily_v4`, the core-plus-alpha daily control;
+  - `daily_v5`, its benchmark-aware challenger;
+  - `intra_v1`, the 15-minute intraday control;
+  - `intra_v2`, a lower-turnover selective intraday challenger.
 - Next-session-open backtests, avoiding same-close look-ahead fills.
 - Configurable slippage, per-share fees, fractional shares, and rebalance cadence.
 - Gross-exposure and per-position limits.

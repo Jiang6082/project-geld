@@ -1,5 +1,5 @@
 [account]
-name = "intraday"
+name = "intra-v1"
 credential_profile = "INTRADAY"
 confirmation_env = "PROJECT_GELD_INTRADAY_CONFIRM_PAPER"
 
@@ -17,7 +17,7 @@ adjustment = "all"
 cache_dir = "data/cache/intraday"
 
 [strategy]
-name = "intraday_momentum"
+name = "intra_v1"
 
 [strategy.parameters]
 benchmark_symbol = "SPY"

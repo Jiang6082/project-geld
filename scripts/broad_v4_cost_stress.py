@@ -29,7 +29,7 @@ def main() -> None:
         (directory / "membership-periods.json").read_text(encoding="utf-8")
     )
     strategy = create_strategy(
-        "momentum_v4",
+        "daily_v4",
         {
             "core_symbol": "SPY",
             "core_weight": 0.75,

@@ -1,5 +1,5 @@
 [account]
-name = "swing-v4"
+name = "daily-v5-research"
 credential_profile = "SWING"
 confirmation_env = "PROJECT_GELD_SWING_CONFIRM_PAPER"
 
@@ -14,15 +14,21 @@ adjustment = "all"
 cache_dir = "data/cache/swing"
 
 [strategy]
-name = "momentum_v4"
+name = "daily_v5"
 
 [strategy.parameters]
 core_symbol = "SPY"
 core_weight = 0.40
 active_weight = 0.60
 active_name_cap = 0.03
-no_trade_band = 0.0025
+no_trade_band = 0.004
 rebalance_every = 21
+core_trend_window = 200
+core_volatility_window = 20
+core_target_volatility = 10.0
+minimum_exposure_multiplier = 1.0
+bearish_core_multiplier = 1.0
+bearish_active_multiplier = 1.0
 
 [strategy.parameters.active_parameters]
 formation_lookback = 252
@@ -38,6 +44,9 @@ exit_rank = 80
 maximum_annualized_volatility = 0.60
 max_pairwise_correlation = 0.85
 residual_factor_symbols = []
+weighting_method = "benchmark_aware"
+beta_penalty = 0.50
+score_tilt_strength = 0.20
 
 [backtest]
 initial_cash = 100000.0
@@ -68,9 +77,8 @@ SPY = 0.40
 [paper]
 enabled = false
 lookback_days = 800
-client_order_prefix = "geldswg"
+client_order_prefix = "gelddv5"
 rebalance_every_sessions = 21
-state_file = "artifacts/paper-swing-v4/rebalance_state.json"
+state_file = "artifacts/research-daily-v5/rebalance_state.json"
 cash_buffer_pct = 0.01
 max_universe_age_days = 45
-

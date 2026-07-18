@@ -129,7 +129,7 @@ def main() -> None:
         if variant["quality_score_weight"] or variant["earnings_score_weight"]:
             active["external_features_file"] = str(feature_path)
         strategy = create_strategy(
-            "momentum_v4",
+            "daily_v4",
             {
                 "core_symbol": "SPY",
                 "core_weight": variant["core_weight"],

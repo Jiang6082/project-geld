@@ -247,7 +247,7 @@ def command_intraday_backtest(args) -> None:
     config = load_config(args.config)
     validate_config(config)
     strategy = create_strategy(config.strategy.name, config.strategy.parameters)
-    if strategy.name != "intraday_momentum":
+    if not strategy.name.startswith("intra_v"):
         raise ValueError("intraday-backtest requires an intraday strategy config.")
     context = _strategy_context(strategy)
     one_minute = _load_bars(args, config, context, timeframe="1Min")
@@ -274,7 +274,7 @@ def command_intraday_paper(args) -> None:
     config = load_config(args.config)
     validate_config(config)
     strategy = create_strategy(config.strategy.name, config.strategy.parameters)
-    if strategy.name != "intraday_momentum":
+    if not strategy.name.startswith("intra_v"):
         raise ValueError("intraday-paper-once requires an intraday strategy config.")
     context = _strategy_context(strategy)
     managed = _managed_symbols(config, strategy)

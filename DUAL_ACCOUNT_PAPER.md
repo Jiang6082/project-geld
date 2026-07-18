@@ -11,8 +11,8 @@ Assuming the two paper accounts receive equal starting capital:
 | Aggregate capital | Role |
 |---:|---|
 | 20% | SPY core: 40% of the swing account |
-| 30% | V4 slow momentum: 60% of the swing account |
-| Up to 35% | Intraday momentum: 70% maximum exposure in the intraday account |
+| 30% | Daily V4 active sleeve: 60% of the daily account |
+| Up to 35% | Intra V1: 70% maximum exposure in the intraday account |
 | At least 15% | Intraday-account cash reserve |
 
 The intraday sleeve normally returns to cash before the close. These are paper
@@ -34,30 +34,30 @@ PROJECT_GELD_INTRADAY_CONFIRM_PAPER=NO
 
 Leave both confirmation values at `NO` while backtesting and dry planning.
 
-## Slow account
+## Daily V4 account
 
 Dry plan:
 
 ```powershell
-geld --config configs/paper-swing-v4.toml paper-once --output artifacts/paper-swing-v4
+geld --config configs/paper-daily-v4.toml paper-once --output artifacts/paper-daily-v4
 ```
 
-The config uses 40% SPY and 60% V4 active momentum, with the existing 21-session
+The config uses 40% SPY and 60% Daily V4 active momentum, with the existing 21-session
 rebalance cadence. Before submission, set `[paper] enabled = true` in the config
 and `PROJECT_GELD_SWING_CONFIRM_PAPER=YES` in `.env`.
 
-## Intraday account
+## Intra V1 account
 
 Backtest completed 15-minute bars:
 
 ```powershell
-geld --config configs/paper-intraday.toml intraday-backtest --source alpaca --start 2026-04-01 --end 2026-07-15 --output artifacts/intraday-backtest
+geld --config configs/paper-intra-v1.toml intraday-backtest --source alpaca --start 2026-04-01 --end 2026-07-15 --output artifacts/intra-v1-backtest
 ```
 
 Dry-plan the latest completed bar:
 
 ```powershell
-geld --config configs/paper-intraday.toml intraday-paper-once --output artifacts/paper-intraday
+geld --config configs/paper-intra-v1.toml intraday-paper-once --output artifacts/paper-intra-v1
 ```
 
 The configured intraday research candidate ranks liquid short-horizon laggards
@@ -89,3 +89,5 @@ benchmark after costs:
 The intraday account should remain paper-only until walk-forward results survive
 spread and slippage stress and paper fills remain stable for several market
 regimes.
+
+See `VERSIONED_RESEARCH.md` for the Daily V5 and Intra V2 challenger results.

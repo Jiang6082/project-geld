@@ -21,7 +21,7 @@ eight-basis-point slippage assumption, it lost 18.1% over the full period while
 SPY gained approximately 14.0%. Its turnover was excessive. It was rejected
 for paper submission.
 
-## Current research candidate
+## Intra V1 research candidate
 
 The less-bad candidate buys up to six liquid stocks that lag SPY over the prior
 four 15-minute bars while the broad market is above its session VWAP. It uses
@@ -50,10 +50,10 @@ results remain positive and the later paper sample improves on cash after costs.
 
 ## Swing allocation diagnostic
 
-Increasing V4 from 25% to 60% active and reducing its SPY core from 75% to 40%
+Increasing Daily V4 from 25% to 60% active and reducing its SPY core from 75% to 40%
 produced the following already-inspected 2020–July 15, 2026 diagnostic:
 
-| Metric | 40% SPY / 60% V4 active | Prior 75% SPY / 25% active | SPY |
+| Metric | 40% SPY / 60% Daily V4 active | Prior 75% SPY / 25% active | SPY |
 |---|---:|---:|---:|
 | CAGR | 16.21% | 15.99% | 15.40% |
 | Sharpe | 0.848 | 0.857 | 0.821 |

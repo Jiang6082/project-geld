@@ -1,21 +1,26 @@
+[account]
+name = "daily-v4"
+credential_profile = "SWING"
+confirmation_env = "PROJECT_GELD_SWING_CONFIRM_PAPER"
+
 [universe]
 symbols = []
-symbols_file = "artifacts/paper-v4-shadow/universe.csv"
+symbols_file = "../artifacts/paper-v4-shadow/universe.csv"
 benchmark = "SPY"
 
 [data]
 feed = "iex"
 adjustment = "all"
-cache_dir = "data/cache"
+cache_dir = "data/cache/swing"
 
 [strategy]
 name = "daily_v4"
 
 [strategy.parameters]
 core_symbol = "SPY"
-core_weight = 0.75
-active_weight = 0.25
-active_name_cap = 0.02
+core_weight = 0.40
+active_weight = 0.60
+active_name_cap = 0.03
 no_trade_band = 0.0025
 rebalance_every = 21
 
@@ -45,26 +50,26 @@ missing_price_haircut_pct = 0.0
 
 [risk]
 max_gross_exposure = 1.0
-max_position_weight = 0.02
-max_order_notional = 20000.0
-max_order_pct_equity = 0.02
+max_position_weight = 0.03
+max_order_notional = 100000.0
+max_order_pct_equity = 0.03
 min_trade_notional = 10.0
 max_daily_loss_pct = 0.02
 
 [risk.symbol_position_weight_limits]
-SPY = 0.75
+SPY = 0.40
 
 [risk.symbol_order_notional_limits]
 SPY = 1000000000.0
 
 [risk.symbol_order_pct_equity_limits]
-SPY = 0.75
+SPY = 0.40
 
 [paper]
 enabled = false
 lookback_days = 800
-client_order_prefix = "geldv4"
+client_order_prefix = "geldswg"
 rebalance_every_sessions = 21
-state_file = "artifacts/paper-v4/rebalance_state.json"
+state_file = "artifacts/paper-daily-v4/rebalance_state.json"
 cash_buffer_pct = 0.01
 max_universe_age_days = 45
