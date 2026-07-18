@@ -9,6 +9,7 @@ from project_geld.strategies.equity_momentum_v3 import EquityMomentumV3
 from project_geld.strategies.mean_reversion import LongOnlyMeanReversion
 from project_geld.strategies.momentum import CrossSectionalMomentum
 from project_geld.strategies.trend import TrendStrength
+from project_geld.strategies.intraday_momentum import IntradayRelativeMomentum
 
 
 STRATEGIES = {
@@ -18,6 +19,7 @@ STRATEGIES = {
     "momentum_v4": CoreSatelliteMomentum,
     "trend": TrendStrength,
     "mean_reversion": LongOnlyMeanReversion,
+    "intraday_momentum": IntradayRelativeMomentum,
 }
 
 

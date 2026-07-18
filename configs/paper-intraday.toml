@@ -1,0 +1,73 @@
+[account]
+name = "intraday"
+credential_profile = "INTRADAY"
+confirmation_env = "PROJECT_GELD_INTRADAY_CONFIRM_PAPER"
+
+[universe]
+symbols = [
+  "AAPL", "AMD", "AMZN", "AVGO", "BAC", "COIN", "GOOGL", "INTC",
+  "JPM", "META", "MSFT", "MU", "NFLX", "NVDA", "ORCL", "PLTR",
+  "QQQ", "SMCI", "TSLA", "XLF", "XLK"
+]
+benchmark = "SPY"
+
+[data]
+feed = "iex"
+adjustment = "all"
+cache_dir = "data/cache/intraday"
+
+[strategy]
+name = "intraday_momentum"
+
+[strategy.parameters]
+benchmark_symbol = "SPY"
+lookback_bars = 4
+top_n = 6
+exit_rank = 12
+rebalance_every_bars = 999
+gross_exposure = 0.70
+max_position_weight = 0.12
+min_bar_dollar_volume = 1000000.0
+signal_start = "10:00"
+last_entry = "15:30"
+flatten_at = "15:45"
+require_benchmark_above_vwap = true
+signal_mode = "mean_reversion"
+require_stock_vwap_confirmation = true
+timezone = "America/New_York"
+
+[intraday]
+bar_minutes = 15
+lookback_days = 10
+state_file = "artifacts/paper-intraday/cycle_state.json"
+
+[backtest]
+initial_cash = 100000.0
+slippage_bps = 8.0
+commission_per_share = 0.0
+allow_fractional = true
+rebalance_every = 1
+missing_price_exit_sessions = 2
+missing_price_haircut_pct = 0.05
+force_flat_at_session_end = true
+session_timezone = "America/New_York"
+
+[risk]
+max_gross_exposure = 0.70
+max_position_weight = 0.12
+max_order_notional = 12000.0
+max_order_pct_equity = 0.12
+min_trade_notional = 25.0
+min_trade_pct_equity = 0.005
+max_daily_loss_pct = 0.005
+
+[paper]
+enabled = false
+lookback_days = 10
+client_order_prefix = "geldint"
+rebalance_every_sessions = 1
+state_file = "artifacts/paper-intraday/unused-daily-state.json"
+cash_buffer_pct = 0.01
+max_universe_age_days = 45
+execution_style = "marketable_limit"
+limit_offset_bps = 2.0

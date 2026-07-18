@@ -3,13 +3,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from hashlib import sha256
-import os
 from pathlib import Path
 from typing import Protocol
 
 import numpy as np
 import pandas as pd
-from dotenv import load_dotenv
+from project_geld.credentials import load_alpaca_credentials
 
 
 BAR_COLUMNS = ["timestamp", "symbol", "open", "high", "low", "close", "volume"]
@@ -111,13 +110,10 @@ class SyntheticBarSource:
 
 
 class AlpacaBarSource:
-    def __init__(self, feed: str = "iex", adjustment: str = "all") -> None:
-        load_dotenv()
-        api_key = os.getenv("ALPACA_API_KEY") or os.getenv("APCA_API_KEY_ID")
-        secret_key = os.getenv("ALPACA_SECRET_KEY") or os.getenv("APCA_API_SECRET_KEY")
-        if not api_key or not secret_key:
-            raise RuntimeError("Set ALPACA_API_KEY and ALPACA_SECRET_KEY in .env.")
-
+    def __init__(
+        self, feed: str = "iex", adjustment: str = "all", credential_profile: str = ""
+    ) -> None:
+        api_key, secret_key = load_alpaca_credentials(credential_profile)
         from alpaca.data.historical import StockHistoricalDataClient
 
         self.client = StockHistoricalDataClient(api_key, secret_key)

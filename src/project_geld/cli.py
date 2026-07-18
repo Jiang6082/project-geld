@@ -18,6 +18,12 @@ from project_geld.data import (
     default_date_range,
 )
 from project_geld.experiments import grid_search, save_experiment
+from project_geld.intraday import (
+    intraday_cycle_due,
+    mark_intraday_cycle,
+    resample_intraday_bars,
+    run_intraday_backtest,
+)
 from project_geld.paper import (
     AlpacaPaperBroker,
     append_performance_snapshot,
@@ -44,16 +50,25 @@ def _source(args, config: AppConfig):
         if not args.csv:
             raise ValueError("--csv is required when --source csv is selected.")
         return CsvBarSource(Path(args.csv))
-    alpaca = AlpacaBarSource(config.data.feed, config.data.adjustment)
+    alpaca = AlpacaBarSource(
+        config.data.feed,
+        config.data.adjustment,
+        config.account.credential_profile,
+    )
     return CachedBarSource(alpaca, config.data.cache_dir)
 
 
-def _load_bars(args, config: AppConfig, extra_symbols: list[str] | None = None):
+def _load_bars(
+    args,
+    config: AppConfig,
+    extra_symbols: list[str] | None = None,
+    timeframe: str = "1Day",
+):
     default_start, default_end = default_date_range()
     start = _date(getattr(args, "start", None), default_start)
     end = _date(getattr(args, "end", None), default_end)
     symbols = list(dict.fromkeys([*config.universe.data_symbols, *(extra_symbols or [])]))
-    return _source(args, config).fetch(symbols, start, end)
+    return _source(args, config).fetch(symbols, start, end, timeframe)
 
 
 def _strategy_context(strategy) -> list[str]:
@@ -159,12 +174,16 @@ def command_paper(args) -> None:
     managed = _managed_symbols(config, strategy)
     start, end = default_date_range(config.paper.lookback_days)
     source = CachedBarSource(
-        AlpacaBarSource(config.data.feed, config.data.adjustment),
+        AlpacaBarSource(
+            config.data.feed,
+            config.data.adjustment,
+            config.account.credential_profile,
+        ),
         config.data.cache_dir,
     )
     data_symbols = list(dict.fromkeys([*config.universe.data_symbols, *context]))
     bars = source.fetch(data_symbols, start, end)
-    broker = AlpacaPaperBroker()
+    broker = AlpacaPaperBroker(config.account.credential_profile)
     snapshot = broker.snapshot(managed)
     output = Path(args.output)
     output.mkdir(parents=True, exist_ok=True)
@@ -185,6 +204,7 @@ def command_paper(args) -> None:
         submit=submit,
         snapshot=snapshot,
         context_symbols=context,
+        confirmation_env=config.account.confirmation_env,
     )
     result.targets.to_csv(output / "latest_targets.csv", index=False)
     result.orders.to_csv(output / "paper_orders.csv", index=False)
@@ -209,7 +229,9 @@ def command_paper_status(args) -> None:
     config = load_config(args.config)
     validate_config(config)
     strategy = create_strategy(config.strategy.name, config.strategy.parameters)
-    snapshot = AlpacaPaperBroker().snapshot(_managed_symbols(config, strategy))
+    snapshot = AlpacaPaperBroker(config.account.credential_profile).snapshot(
+        _managed_symbols(config, strategy)
+    )
     output = Path(args.output)
     row = append_performance_snapshot(snapshot, output / "performance.csv")
     print(
@@ -219,6 +241,94 @@ def command_paper_status(args) -> None:
         f"Tracked return: {row['cumulative_return']:.2%}\n"
         f"Managed positions: {row['managed_positions']}"
     )
+
+
+def command_intraday_backtest(args) -> None:
+    config = load_config(args.config)
+    validate_config(config)
+    strategy = create_strategy(config.strategy.name, config.strategy.parameters)
+    if strategy.name != "intraday_momentum":
+        raise ValueError("intraday-backtest requires an intraday strategy config.")
+    context = _strategy_context(strategy)
+    one_minute = _load_bars(args, config, context, timeframe="1Min")
+    bars = resample_intraday_bars(
+        one_minute,
+        config.intraday.bar_minutes,
+        config.backtest.session_timezone,
+    )
+    result = run_intraday_backtest(
+        bars,
+        strategy,
+        config.backtest,
+        config.risk,
+        config.universe.benchmark,
+        _managed_symbols(config, strategy),
+        context_symbols=context,
+    )
+    save_result(result, args.output)
+    _print_metrics(result.metrics)
+    print(f"Artifacts: {Path(args.output).resolve()}")
+
+
+def command_intraday_paper(args) -> None:
+    config = load_config(args.config)
+    validate_config(config)
+    strategy = create_strategy(config.strategy.name, config.strategy.parameters)
+    if strategy.name != "intraday_momentum":
+        raise ValueError("intraday-paper-once requires an intraday strategy config.")
+    context = _strategy_context(strategy)
+    managed = _managed_symbols(config, strategy)
+    start, end = default_date_range(config.intraday.lookback_days)
+    source = AlpacaBarSource(
+        config.data.feed,
+        config.data.adjustment,
+        config.account.credential_profile,
+    )
+    symbols = list(
+        dict.fromkeys([*config.universe.data_symbols, *context])
+    )
+    one_minute = source.fetch(symbols, start, end, "1Min")
+    bars = resample_intraday_bars(
+        one_minute,
+        config.intraday.bar_minutes,
+        config.backtest.session_timezone,
+    )
+    if bars.empty:
+        raise RuntimeError("No completed intraday bars are available.")
+    latest_bar = pd.Timestamp(bars["timestamp"].max())
+    due = intraday_cycle_due(config.intraday.state_file, latest_bar)
+    broker = AlpacaPaperBroker(config.account.credential_profile)
+    snapshot = broker.snapshot(managed)
+    output = Path(args.output)
+    output.mkdir(parents=True, exist_ok=True)
+    performance = append_performance_snapshot(snapshot, output / "performance.csv")
+    submit = args.submit and due
+    result = run_paper_cycle(
+        bars,
+        strategy,
+        broker,
+        config.risk,
+        config.paper,
+        managed,
+        submit=submit,
+        snapshot=snapshot,
+        context_symbols=context,
+        confirmation_env=config.account.confirmation_env,
+    )
+    result.targets.to_csv(output / "latest_targets.csv", index=False)
+    result.orders.to_csv(output / "paper_orders.csv", index=False)
+    print(
+        f"Intraday paper account '{config.account.name}': "
+        f"USD {performance['equity']:,.2f}; latest completed bar {latest_bar}"
+    )
+    print(f"Cycle due: {due}")
+    if args.submit and not due:
+        print("Submission requested but this completed bar was already processed.")
+    if submit:
+        mark_intraday_cycle(config.intraday.state_file, latest_bar)
+    print(result.message)
+    if len(result.orders):
+        print(result.orders.to_string(index=False))
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -259,6 +369,23 @@ def build_parser() -> argparse.ArgumentParser:
     status_parser = subparsers.add_parser("paper-status")
     status_parser.add_argument("--output", default="artifacts/paper")
     status_parser.set_defaults(func=command_paper_status)
+
+    intraday_backtest = subparsers.add_parser("intraday-backtest")
+    intraday_backtest.add_argument(
+        "--source", choices=["alpaca", "csv"], default="alpaca"
+    )
+    intraday_backtest.add_argument("--csv")
+    intraday_backtest.add_argument("--start")
+    intraday_backtest.add_argument("--end")
+    intraday_backtest.add_argument("--output", default="artifacts/intraday-backtest")
+    intraday_backtest.set_defaults(func=command_intraday_backtest)
+
+    intraday_paper = subparsers.add_parser("intraday-paper-once")
+    intraday_paper.add_argument(
+        "--submit", action="store_true", help="Submit to the configured Alpaca paper account"
+    )
+    intraday_paper.add_argument("--output", default="artifacts/intraday-paper")
+    intraday_paper.set_defaults(func=command_intraday_paper)
     return parser
 
 

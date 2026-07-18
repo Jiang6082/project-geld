@@ -80,6 +80,10 @@ def run_backtest(
     dates = closes.index.intersection(opens.index).sort_values()
     if len(dates) < 2:
         raise ValueError("At least two sessions are required.")
+    session_dates = pd.Series(
+        dates.tz_convert(config.session_timezone).date, index=dates
+    )
+    session_ends = set(session_dates.groupby(session_dates).tail(1).index)
 
     target_table = targets.pivot(index="timestamp", columns="symbol", values="target_weight").reindex(dates)
     target_table = target_table.reindex(columns=closes.columns, fill_value=0.0).fillna(0.0)
@@ -122,7 +126,11 @@ def run_backtest(
                 fill_price = market_open * (1 - slip if side == "sell" else 1 + slip)
                 quantity = min(abs(delta), shares.get(symbol, 0.0)) if side == "sell" else abs(delta)
                 quantity = _quantity(quantity, config.allow_fractional)
-                if quantity <= 0 or quantity * fill_price < risk.min_trade_notional:
+                minimum_trade = max(
+                    risk.min_trade_notional,
+                    risk.min_trade_pct_equity * equity_at_open,
+                )
+                if quantity <= 0 or quantity * fill_price < minimum_trade:
                     continue
                 fees = quantity * config.commission_per_share
                 if side == "buy":
@@ -185,6 +193,29 @@ def run_backtest(
 
         last_prices.update({symbol: float(price) for symbol, price in close_prices.items()})
         last_seen_session.update({symbol: session_index for symbol in close_prices.index})
+        if config.force_flat_at_session_end and timestamp in session_ends:
+            for symbol, quantity in list(shares.items()):
+                market_close = float(close_prices.get(symbol, np.nan))
+                if not np.isfinite(market_close) or market_close <= 0:
+                    continue
+                fill_price = market_close * (1 - config.slippage_bps / 10_000)
+                fees = quantity * config.commission_per_share
+                cash += quantity * fill_price - fees
+                shares.pop(symbol, None)
+                trade_rows.append(
+                    {
+                        "signal_timestamp": timestamp,
+                        "timestamp": timestamp,
+                        "symbol": symbol,
+                        "side": "sell",
+                        "quantity": quantity,
+                        "fill_price": fill_price,
+                        "notional": quantity * fill_price,
+                        "fees": fees,
+                        "target_weight": 0.0,
+                        "exit_reason": "intraday_session_end",
+                    }
+                )
         position_value = sum(quantity * last_prices.get(symbol, 0.0) for symbol, quantity in shares.items())
         equity_value = cash + position_value
         equity_rows.append(

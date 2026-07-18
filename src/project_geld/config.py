@@ -26,6 +26,13 @@ class DataConfig:
 
 
 @dataclass(frozen=True)
+class AccountConfig:
+    name: str = "default"
+    credential_profile: str = ""
+    confirmation_env: str = "PROJECT_GELD_CONFIRM_PAPER"
+
+
+@dataclass(frozen=True)
 class StrategyConfig:
     name: str = "momentum"
     parameters: dict[str, Any] = field(default_factory=dict)
@@ -40,6 +47,8 @@ class BacktestConfig:
     rebalance_every: int = 5
     missing_price_exit_sessions: int = 5
     missing_price_haircut_pct: float = 0.25
+    force_flat_at_session_end: bool = False
+    session_timezone: str = "America/New_York"
 
 
 @dataclass(frozen=True)
@@ -52,6 +61,7 @@ class RiskConfig:
     symbol_order_notional_limits: dict[str, float] = field(default_factory=dict)
     symbol_order_pct_equity_limits: dict[str, float] = field(default_factory=dict)
     min_trade_notional: float = 50.0
+    min_trade_pct_equity: float = 0.0
     max_daily_loss_pct: float = 0.02
 
 
@@ -64,16 +74,27 @@ class PaperConfig:
     state_file: Path = Path("artifacts/paper/rebalance_state.json")
     cash_buffer_pct: float = 0.01
     max_universe_age_days: int = 45
+    execution_style: str = "market"
+    limit_offset_bps: float = 0.0
+
+
+@dataclass(frozen=True)
+class IntradayConfig:
+    bar_minutes: int = 15
+    lookback_days: int = 10
+    state_file: Path = Path("artifacts/intraday/cycle_state.json")
 
 
 @dataclass(frozen=True)
 class AppConfig:
     universe: UniverseConfig
+    account: AccountConfig = AccountConfig()
     data: DataConfig = DataConfig()
     strategy: StrategyConfig = StrategyConfig()
     backtest: BacktestConfig = BacktestConfig()
     risk: RiskConfig = RiskConfig()
     paper: PaperConfig = PaperConfig()
+    intraday: IntradayConfig = IntradayConfig()
 
 
 def load_config(path: str | Path = "config.example.toml") -> AppConfig:
@@ -111,6 +132,7 @@ def load_config(path: str | Path = "config.example.toml") -> AppConfig:
     symbols = list(dict.fromkeys([*inline_symbols, *file_symbols]))
     benchmark = str(universe_raw.get("benchmark", "SPY")).upper()
     data_raw = raw.get("data", {})
+    account_raw = raw.get("account", {})
     strategy_raw = raw.get("strategy", {})
     return AppConfig(
         universe=UniverseConfig(
@@ -118,6 +140,15 @@ def load_config(path: str | Path = "config.example.toml") -> AppConfig:
             benchmark=benchmark,
             symbols_file=symbols_file,
             symbols_as_of=symbols_as_of,
+        ),
+        account=AccountConfig(
+            name=str(account_raw.get("name", "default")),
+            credential_profile=str(account_raw.get("credential_profile", "")),
+            confirmation_env=str(
+                account_raw.get(
+                    "confirmation_env", "PROJECT_GELD_CONFIRM_PAPER"
+                )
+            ),
         ),
         data=DataConfig(
             feed=str(data_raw.get("feed", "iex")).lower(),
@@ -150,6 +181,21 @@ def load_config(path: str | Path = "config.example.toml") -> AppConfig:
             max_universe_age_days=int(
                 raw.get("paper", {}).get("max_universe_age_days", 45)
             ),
+            execution_style=str(
+                raw.get("paper", {}).get("execution_style", "market")
+            ).lower(),
+            limit_offset_bps=float(
+                raw.get("paper", {}).get("limit_offset_bps", 0.0)
+            ),
+        ),
+        intraday=IntradayConfig(
+            bar_minutes=int(raw.get("intraday", {}).get("bar_minutes", 15)),
+            lookback_days=int(raw.get("intraday", {}).get("lookback_days", 10)),
+            state_file=Path(
+                raw.get("intraday", {}).get(
+                    "state_file", "artifacts/intraday/cycle_state.json"
+                )
+            ),
         ),
     )
 
@@ -171,6 +217,8 @@ def validate_config(config: AppConfig) -> None:
         raise ValueError("max_position_weight must be in (0, 1].")
     if not 0 < config.risk.max_daily_loss_pct < 1:
         raise ValueError("max_daily_loss_pct must be in (0, 1).")
+    if not 0 <= config.risk.min_trade_pct_equity < 1:
+        raise ValueError("min_trade_pct_equity must be in [0, 1).")
     if config.risk.max_order_pct_equity is not None and not (
         0 < config.risk.max_order_pct_equity <= 1
     ):
@@ -196,3 +244,13 @@ def validate_config(config: AppConfig) -> None:
         raise ValueError("cash_buffer_pct must be in [0, 1).")
     if config.paper.max_universe_age_days < 1:
         raise ValueError("max_universe_age_days must be positive.")
+    if config.paper.execution_style not in {"market", "marketable_limit"}:
+        raise ValueError("paper.execution_style must be market or marketable_limit.")
+    if not 0 <= config.paper.limit_offset_bps <= 100:
+        raise ValueError("paper.limit_offset_bps must be in [0, 100].")
+    if config.intraday.bar_minutes not in {1, 5, 10, 15, 30, 60}:
+        raise ValueError("intraday.bar_minutes must be one of 1, 5, 10, 15, 30, 60.")
+    if config.intraday.lookback_days < 1:
+        raise ValueError("intraday.lookback_days must be positive.")
+    if not config.account.confirmation_env:
+        raise ValueError("account.confirmation_env cannot be empty.")

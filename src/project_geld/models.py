@@ -23,6 +23,7 @@ class OrderIntent:
     target_weight: float
     client_order_id: str
     reason: str = "rebalance"
+    limit_price: float | None = None
 
 
 @dataclass(frozen=True)

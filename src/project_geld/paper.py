@@ -8,9 +8,8 @@ from pathlib import Path
 from typing import Protocol
 
 import pandas as pd
-from dotenv import load_dotenv
-
 from project_geld.config import PaperConfig, RiskConfig
+from project_geld.credentials import load_alpaca_credentials
 from project_geld.models import OrderIntent, PaperCycleResult
 from project_geld.strategies.base import Strategy
 
@@ -139,6 +138,8 @@ def build_rebalance_orders(
     strategy_name: str,
     as_of: pd.Timestamp,
     cash_buffer_pct: float = 0.0,
+    execution_style: str = "market",
+    limit_offset_bps: float = 0.0,
 ) -> list[OrderIntent]:
     if snapshot.equity <= 0:
         raise ValueError("Paper account equity must be positive.")
@@ -168,12 +169,22 @@ def build_rebalance_orders(
         target_weight = float(targets.get(symbol, 0.0))
         desired_quantity = target_weight * snapshot.equity / price
         delta = desired_quantity - current_quantity
-        if abs(delta * price) < risk.min_trade_notional:
+        minimum_trade = max(
+            risk.min_trade_notional,
+            risk.min_trade_pct_equity * snapshot.equity,
+        )
+        if abs(delta * price) < minimum_trade:
             continue
         side = "buy" if delta > 0 else "sell"
         quantity = abs(delta)
         if side == "sell":
             quantity = min(quantity, current_quantity)
+        limit_price = None
+        if execution_style == "marketable_limit":
+            offset = limit_offset_bps / 10_000
+            raw_limit = price * (1 + offset if side == "buy" else 1 - offset)
+            limit_price = round(raw_limit, 2 if raw_limit >= 1 else 4)
+        order_price = limit_price or price
         notional_limit = risk.symbol_order_notional_limits.get(
             symbol, risk.max_order_notional
         )
@@ -182,7 +193,7 @@ def build_rebalance_orders(
         )
         if pct_limit is not None:
             notional_limit = min(notional_limit, pct_limit * snapshot.equity)
-        quantity = min(quantity, notional_limit / price)
+        quantity = min(quantity, notional_limit / order_price)
         quantity = _floor_quantity(quantity)
         if quantity <= 0:
             continue
@@ -196,9 +207,10 @@ def build_rebalance_orders(
                 side=side,
                 quantity=quantity,
                 reference_price=price,
-                notional=quantity * price,
+                notional=quantity * order_price,
                 target_weight=target_weight,
                 client_order_id=client_order_id,
+                limit_price=limit_price,
             )
         )
     sell_notional = sum(order.notional for order in orders if order.side == "sell")
@@ -212,9 +224,13 @@ def build_rebalance_orders(
             continue
         affordable_notional = min(order.notional, remaining_buying_budget)
         affordable_quantity = _floor_quantity(
-            affordable_notional / order.reference_price
+            affordable_notional / (order.limit_price or order.reference_price)
         )
-        if affordable_notional < risk.min_trade_notional or affordable_quantity <= 0:
+        minimum_trade = max(
+            risk.min_trade_notional,
+            risk.min_trade_pct_equity * snapshot.equity,
+        )
+        if affordable_notional < minimum_trade or affordable_quantity <= 0:
             continue
         cash_safe_orders.append(
             OrderIntent(
@@ -222,25 +238,24 @@ def build_rebalance_orders(
                 side=order.side,
                 quantity=affordable_quantity,
                 reference_price=order.reference_price,
-                notional=affordable_quantity * order.reference_price,
+                notional=affordable_quantity * (order.limit_price or order.reference_price),
                 target_weight=order.target_weight,
                 client_order_id=order.client_order_id,
                 reason=order.reason,
+                limit_price=order.limit_price,
             )
         )
-        remaining_buying_budget -= affordable_quantity * order.reference_price
+        remaining_buying_budget -= affordable_quantity * (
+            order.limit_price or order.reference_price
+        )
     return cash_safe_orders
 
 
 class AlpacaPaperBroker:
     """Alpaca adapter that is structurally restricted to paper=True."""
 
-    def __init__(self) -> None:
-        load_dotenv()
-        api_key = os.getenv("ALPACA_API_KEY") or os.getenv("APCA_API_KEY_ID")
-        secret_key = os.getenv("ALPACA_SECRET_KEY") or os.getenv("APCA_API_SECRET_KEY")
-        if not api_key or not secret_key:
-            raise RuntimeError("Set ALPACA_API_KEY and ALPACA_SECRET_KEY in .env.")
+    def __init__(self, credential_profile: str = "") -> None:
+        api_key, secret_key = load_alpaca_credentials(credential_profile)
         from alpaca.trading.client import TradingClient
 
         self.client = TradingClient(api_key, secret_key, paper=True)
@@ -279,14 +294,19 @@ class AlpacaPaperBroker:
 
     def submit(self, intent: OrderIntent):
         from alpaca.trading.enums import OrderSide, TimeInForce
-        from alpaca.trading.requests import MarketOrderRequest
+        from alpaca.trading.requests import LimitOrderRequest, MarketOrderRequest
 
-        request = MarketOrderRequest(
-            symbol=intent.symbol,
-            qty=intent.quantity,
-            side=OrderSide.BUY if intent.side == "buy" else OrderSide.SELL,
-            time_in_force=TimeInForce.DAY,
-            client_order_id=intent.client_order_id,
+        common = {
+            "symbol": intent.symbol,
+            "qty": intent.quantity,
+            "side": OrderSide.BUY if intent.side == "buy" else OrderSide.SELL,
+            "time_in_force": TimeInForce.DAY,
+            "client_order_id": intent.client_order_id,
+        }
+        request = (
+            LimitOrderRequest(**common, limit_price=intent.limit_price)
+            if intent.limit_price is not None
+            else MarketOrderRequest(**common)
         )
         return self.client.submit_order(order_data=request)
 
@@ -301,11 +321,12 @@ def run_paper_cycle(
     submit: bool = False,
     snapshot: AccountSnapshot | None = None,
     context_symbols: list[str] | None = None,
+    confirmation_env: str = "PROJECT_GELD_CONFIRM_PAPER",
 ) -> PaperCycleResult:
     if submit and not paper.enabled:
         raise RuntimeError("Set [paper] enabled = true before submitting paper orders.")
-    if submit and os.getenv("PROJECT_GELD_CONFIRM_PAPER") != "YES":
-        raise RuntimeError("Set PROJECT_GELD_CONFIRM_PAPER=YES before submitting paper orders.")
+    if submit and os.getenv(confirmation_env) != "YES":
+        raise RuntimeError(f"Set {confirmation_env}=YES before submitting paper orders.")
     clock = broker.get_clock()
     if submit and not bool(clock.is_open):
         raise RuntimeError("The US equity market is closed; no paper orders submitted.")
@@ -336,6 +357,8 @@ def run_paper_cycle(
         strategy.name,
         pd.Timestamp(latest_time),
         paper.cash_buffer_pct,
+        paper.execution_style,
+        paper.limit_offset_bps,
     )
     rows: list[dict] = []
     for intent in intents:

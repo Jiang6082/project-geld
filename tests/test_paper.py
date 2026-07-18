@@ -137,6 +137,51 @@ def test_unmanaged_positions_reduce_available_gross_exposure():
     assert sum(order.notional for order in orders if order.side == "buy") <= 30_000.01
 
 
+def test_equity_relative_no_trade_band_ignores_small_drift():
+    latest = targets().copy()
+    latest["target_weight"] = [0.101, 0.0, 0.0]
+    orders = build_rebalance_orders(
+        latest,
+        {"AAPL": 100, "MSFT": 100, "SPY": 100},
+        AccountSnapshot(
+            equity=100_000,
+            last_equity=100_000,
+            positions={"AAPL": 100.0},
+            open_order_symbols=set(),
+            cash=90_000,
+        ),
+        RiskConfig(
+            max_position_weight=1.0,
+            max_order_notional=100_000,
+            min_trade_notional=10,
+            min_trade_pct_equity=0.005,
+        ),
+        "geld",
+        "intraday_momentum",
+        pd.Timestamp("2025-01-02", tz="UTC"),
+    )
+    assert not orders
+
+
+def test_marketable_limit_plan_exposes_price_ceiling():
+    orders = build_rebalance_orders(
+        targets(),
+        {"AAPL": 200, "MSFT": 400, "SPY": 500},
+        AccountSnapshot(100_000, 100_000, {}, set(), cash=100_000),
+        RiskConfig(max_position_weight=1.0, max_order_notional=100_000),
+        "geld",
+        "intraday_momentum",
+        pd.Timestamp("2025-01-02", tz="UTC"),
+        execution_style="marketable_limit",
+        limit_offset_bps=2.0,
+    )
+    by_symbol = {order.symbol: order for order in orders}
+    assert by_symbol["AAPL"].limit_price == 200.04
+    assert by_symbol["AAPL"].notional == pytest.approx(
+        by_symbol["AAPL"].quantity * 200.04
+    )
+
+
 def test_performance_log_replaces_same_day_and_tracks_baseline(tmp_path):
     path = tmp_path / "performance.csv"
     first = AccountSnapshot(100_000, 99_000, {}, set(), cash=100_000)

@@ -8,6 +8,11 @@ execution costs, before it is allowed anywhere near paper execution?
 This is research software, not investment advice. It is intentionally
 paper-only and has no live-trading mode.
 
+The platform also supports an isolated dual-account paper workflow: a slower
+V4 momentum account and a separate 15-minute intraday account with independent
+Alpaca credentials, state, risk limits, and performance logs. See
+`DUAL_ACCOUNT_PAPER.md` for the proposed allocation and exact commands.
+
 ## What is included
 
 - A common strategy interface shared by research and paper execution.
