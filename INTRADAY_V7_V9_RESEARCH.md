@@ -1,4 +1,4 @@
-# Intraday V7–V10 short-continuation research
+# Intraday V7–V12 short-continuation research
 
 ## Question and protocol
 
@@ -28,6 +28,12 @@ market impact are unavailable and could make real results worse.
   prior 20-session median for the same bar time.
 - **V10:** Apply V8 only when the morning dislocation is at least two times the
   stock's own prior 20-session variability at the same signal time.
+- **V11:** Fit a rolling ridge model on completed prior sessions, calibrate its
+  return forecast on earlier V8-type setups, and require a forecast decline
+  large enough to clear the modeled round-trip trading cost.
+- **V12:** Apply V8 only when signal-bar volume is no more than 1.5 times its
+  prior 20-session same-time median and the confirmation close is at least
+  0.25% below the signal-bar low.
 
 All variants allow at most four names, 10% per name, and 40% gross exposure.
 
@@ -42,6 +48,8 @@ All variants allow at most four names, 10% per name, and 40% gross exposure.
 | V8 trend-aligned short, broad 100 | 0.93% | 0.12% | 0.149 | -2.63% | 2.53x | 299 |
 | V9 volume-confirmed short, broad 100 | -1.25% | -0.17% | -0.219 | -2.48% | 1.62x | 195 |
 | V10 volatility-normalized short, broad 100 | -1.78% | -0.24% | -0.344 | -2.86% | 1.25x | 151 |
+| V11 rolling-model filter, broad 100 | -1.28% | -0.17% | -0.502 | -1.66% | 0.45x | 53 |
+| V12 quiet-volume decisive break, broad 100 | 2.61% | 0.34% | 1.033 | -0.21% | 0.51x | 61 |
 | SPY buy and hold, broad dates | 153.66% | — | — | — | — | — |
 
 V8 is the best result but is not stable across time. Its broad calendar returns
@@ -56,15 +64,28 @@ and recent-year-dependent. V9's failure shows that unusual volume does not
 repair the instability. V10's failure shows that normalizing by prior morning
 variability also removes useful trades without creating a stable edge.
 
+V11 also fails: its causal forecast is too weak and unstable to improve the
+rule-based setup. V12 is the new historical leader. At eight basis points of
+one-way slippage it returns 2.61%, with a 1.033 Sharpe and a 0.21% maximum
+drawdown. Its approximate fixed-trade cost stress remains positive at 16 bps
+(2.30%), 24 bps (1.99%), and 40 bps (1.37%) one way.
+
+The V12 evidence is nevertheless sparse: 19 completed positions on 17 sessions
+and 17 symbols. Calendar returns are 0.44% in 2022, 0.11% in 2024, 0.96% in
+2025, and 1.08% in partial 2026, with no trades in 2019–2021 or 2023. The
+quiet-volume/deeper-break hypothesis was developed after inspecting V8 outcomes
+on this same dataset. Its split diagnostic was directionally consistent, but it
+is not untouched out-of-sample evidence.
+
 ## Decision
 
-No tested intraday version demonstrates true alpha. V8 is retained as a locked
-research hypothesis, not promoted to paper execution. Its public configuration
-has `paper.enabled = false`, and the paper planner refuses short targets even in
-dry-run order planning. The next valid evidence must be a new forward shadow
-sample that records signal-time bid/ask spreads, shortable/easy-to-borrow status,
-locate failures, and hypothetical limit fills. Further threshold fitting on
-this historical sample would increase overfitting rather than confidence.
+V12 replaces V8 as the best historical research challenger, but it does not yet
+demonstrate true alpha because its sample is tiny, the fixed 2026 universe has
+survivorship/future-membership bias, and its filters were informed by the same
+history. Its public configuration therefore keeps `paper.enabled = false`, and
+the paper planner still refuses negative targets. Further work should increase
+independent sample size and remove universe bias before changing execution
+status; further threshold fitting on this sample would increase overfitting.
 
 Broad Alpaca retrieval is now cached in resumable 25-symbol batches so future
 universe studies can restart without losing completed downloads.

@@ -32,6 +32,8 @@ class IntraV7:
     require_below_prior_close: bool = False
     relative_volume_sessions: int = 0
     min_relative_volume: float = 0.0
+    max_relative_volume: float = 0.0
+    min_confirmation_break: float = 0.0
     relative_volatility_sessions: int = 0
     min_dislocation_sigma: float = 0.0
     timezone: str = "America/New_York"
@@ -51,8 +53,16 @@ class IntraV7:
             raise ValueError("min_relative_dislocation cannot be negative.")
         if self.daily_trend_sessions < 0:
             raise ValueError("daily_trend_sessions cannot be negative.")
-        if self.relative_volume_sessions < 0 or self.min_relative_volume < 0:
+        if (
+            self.relative_volume_sessions < 0
+            or self.min_relative_volume < 0
+            or self.max_relative_volume < 0
+        ):
             raise ValueError("Relative-volume settings cannot be negative.")
+        if self.max_relative_volume and self.max_relative_volume < self.min_relative_volume:
+            raise ValueError("max_relative_volume cannot be below min_relative_volume.")
+        if not 0 <= self.min_confirmation_break < 1:
+            raise ValueError("min_confirmation_break must be in [0, 1).")
         if self.relative_volatility_sessions < 0 or self.min_dislocation_sigma < 0:
             raise ValueError("Relative-volatility settings cannot be negative.")
         if _clock(self.signal_time) >= _clock(self.flatten_at):
@@ -175,6 +185,8 @@ class IntraV7:
                         current_session, tradables
                     ].div(prior_signal_volume.loc[current_session, tradables])
                     volume_surge = relative_volume.ge(self.min_relative_volume)
+                    if self.max_relative_volume:
+                        volume_surge &= relative_volume.le(self.max_relative_volume)
                 else:
                     volume_surge = pd.Series(True, index=tradables)
                 if self.relative_volatility_sessions:
@@ -212,7 +224,8 @@ class IntraV7:
                 confirmed = [
                     (symbol, score)
                     for symbol, (score, signal_low) in candidates.items()
-                    if close.at[timestamp, symbol] < signal_low
+                    if close.at[timestamp, symbol]
+                    < signal_low * (1.0 - self.min_confirmation_break)
                 ]
                 confirmed.sort(key=lambda item: item[1], reverse=True)
                 selected = [symbol for symbol, _ in confirmed[: self.top_n]] if market_ok else []

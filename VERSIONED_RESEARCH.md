@@ -14,6 +14,8 @@ Canonical production-facing names use the trading horizon followed by a version:
 - `intra_v8`: V7 aligned with a prior 20-session downtrend.
 - `intra_v9`: rejected V8 unusual-volume confirmation.
 - `intra_v10`: rejected V8 prior-volatility normalization.
+- `intra_v11`: rejected causal rolling ridge filter for V8 setups.
+- `intra_v12`: current quiet-volume, decisive-break short challenger.
 
 The old registry names `momentum_v4` and `intraday_momentum` remain aliases so
 old notebooks do not break. New configs and artifacts must use canonical names.
@@ -120,3 +122,11 @@ targets are supported only by an opt-in backtest path; paper planning rejects
 them. See `INTRADAY_V7_V9_RESEARCH.md` for the protocol, limitations, and full
 comparison. V10 subsequently lost 1.78% with a -0.344 Sharpe, so the locked V8
 forward-shadow study remains unchanged.
+
+V11's rolling, prior-session-only ridge filter lost 1.28% with a -0.502 Sharpe
+and is rejected. V12 reverses the failed V9 volume idea: it excludes unusually
+high-volume setups and requires the confirmation close to finish at least 0.25%
+below the signal low. It returned 2.61% at eight-basis-point slippage, with a
+1.033 Sharpe and -0.21% maximum drawdown. Only 19 completed positions generated
+that result, and the hypothesis was developed from the same biased broad sample,
+so V12 remains research-only with paper execution disabled.

@@ -20,6 +20,8 @@ from project_geld.strategies.intra_v7 import IntraV7
 from project_geld.strategies.intra_v8 import IntraV8
 from project_geld.strategies.intra_v9 import IntraV9
 from project_geld.strategies.intra_v10 import IntraV10
+from project_geld.strategies.intra_v11 import FEATURE_COLUMNS, IntraV11
+from project_geld.strategies.intra_v12 import IntraV12
 
 
 def minute_bars() -> pd.DataFrame:
@@ -393,6 +395,38 @@ def test_intra_v10_normalizes_dislocation_by_prior_variability():
     assert strategy.relative_volatility_sessions == 20
     assert strategy.min_dislocation_sigma == 2.0
     assert strategy.name == "intra_v10"
+
+
+def test_intra_v11_uses_a_causal_rolling_model():
+    strategy = IntraV11()
+    assert strategy.min_training_sessions == 252
+    assert strategy.min_calibration_samples == 12
+    assert strategy.prediction_threshold < 0
+    assert strategy.name == "intra_v11"
+
+
+def test_intra_v11_ridge_forecast_uses_training_relationship():
+    rows = []
+    for value in range(-20, 21):
+        row = {column: 0.0 for column in FEATURE_COLUMNS}
+        row["relative_dislocation"] = value / 100.0
+        row["label"] = -0.5 * row["relative_dislocation"]
+        rows.append(row)
+    training = pd.DataFrame(rows)
+    current = pd.DataFrame(
+        [{**{column: 0.0 for column in FEATURE_COLUMNS}, "relative_dislocation": 0.10}],
+        index=["TEST"],
+    )
+    prediction = IntraV11.fit_predict(training, current, 0.01, 1.0, 10.0)
+    assert prediction.at["TEST"] < -0.04
+
+
+def test_intra_v12_requires_quiet_volume_and_a_decisive_break():
+    strategy = IntraV12()
+    assert strategy.relative_volume_sessions == 20
+    assert strategy.max_relative_volume == 1.5
+    assert strategy.min_confirmation_break == 0.0025
+    assert strategy.name == "intra_v12"
 
 
 class AlwaysIntradayLong:
