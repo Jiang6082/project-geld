@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import time
 
 import numpy as np
@@ -37,6 +37,9 @@ class IntraV7:
     min_confirmation_break: float = 0.0
     relative_volatility_sessions: int = 0
     min_dislocation_sigma: float = 0.0
+    membership_periods: dict[str, list[list[str | None]]] = field(
+        default_factory=dict
+    )
     timezone: str = "America/New_York"
     name: str = "intra_v7"
 
@@ -170,6 +173,7 @@ class IntraV7:
                 [np.inf, -np.inf], np.nan
             )
             if local_time == _clock(self.signal_time):
+                member = self.membership_mask(current_session, tradables)
                 liquid = dollar_volume.loc[timestamp, tradables].ge(
                     self.min_bar_dollar_volume
                 )
@@ -210,7 +214,8 @@ class IntraV7:
                     unusual_dislocation = pd.Series(True, index=tradables)
                     ranking_scores = scores
                 qualified = ranking_scores[
-                    liquid
+                    member
+                    & liquid
                     & dislocated
                     & below_vwap
                     & downtrend
@@ -256,6 +261,22 @@ class IntraV7:
                     }
                 )
         return pd.DataFrame.from_records(records, columns=TARGET_COLUMNS)
+
+    def membership_mask(
+        self, session_date: object, symbols: list[str]
+    ) -> pd.Series:
+        if not self.membership_periods:
+            return pd.Series(True, index=symbols)
+        date = pd.Timestamp(session_date).date()
+        result = {}
+        for symbol in symbols:
+            periods = self.membership_periods.get(symbol.upper(), [])
+            result[symbol] = any(
+                pd.Timestamp(start).date() <= date
+                and (end is None or date <= pd.Timestamp(end).date())
+                for start, end in periods
+            )
+        return pd.Series(result, dtype=bool)
 
     def _infer_bar_minutes(self, index: pd.DatetimeIndex) -> int:
         differences = index.to_series().diff().dropna()

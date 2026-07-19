@@ -1,0 +1,98 @@
+{
+  "as_of": "2026-07-19",
+  "common_period": {
+    "end": "2026-07-17",
+    "start": "2020-07-27"
+  },
+  "cost_stress": [
+    {
+      "max_drawdown": -0.01843637318641711,
+      "sharpe": 0.7370711517001377,
+      "slippage_bps_one_way": 8.0,
+      "total_return": 0.0579421897378416
+    },
+    {
+      "max_drawdown": -0.021200357918560675,
+      "sharpe": 0.6108064151230225,
+      "slippage_bps_one_way": 16.0,
+      "total_return": 0.046791886540340055
+    },
+    {
+      "max_drawdown": -0.023957174097897438,
+      "sharpe": 0.47880595842570767,
+      "slippage_bps_one_way": 24.0,
+      "total_return": 0.03578687735167918
+    }
+  ],
+  "extended_pit_sip": {
+    "max_drawdown": -0.018436373210851564,
+    "positions": 82,
+    "sharpe": 0.7374517441352109,
+    "start": "2019-01-02",
+    "total_return": 0.06985520374724574
+  },
+  "feed_agreement": {
+    "common_bars": 6750765,
+    "iex_only_bars": 0,
+    "median_close_difference_bps": 2.2239519626371647,
+    "median_iex_to_sip_volume": 0.03657612283318256,
+    "p95_close_difference_bps": 18.066847335139613,
+    "p99_close_difference_bps": 40.05340453938618,
+    "sip_only_bars": 156501
+  },
+  "matched_results": [
+    {
+      "feed": "iex",
+      "max_drawdown": -0.002108641689074209,
+      "positions": 19,
+      "sharpe": 1.03354177372881,
+      "total_return": 0.026108304435037644,
+      "universe": "fixed_2026_100"
+    },
+    {
+      "feed": "iex",
+      "max_drawdown": -0.009395031838059897,
+      "positions": 37,
+      "sharpe": 0.6453992645529391,
+      "total_return": 0.023957407717569046,
+      "universe": "pit_liquid_100"
+    },
+    {
+      "feed": "sip",
+      "max_drawdown": -0.025674924814870992,
+      "positions": 39,
+      "sharpe": 0.025336382527953782,
+      "total_return": 0.0010582604526507833,
+      "universe": "fixed_2026_100"
+    },
+    {
+      "feed": "sip",
+      "max_drawdown": -0.01843637318641711,
+      "positions": 65,
+      "sharpe": 0.7370711517001377,
+      "total_return": 0.0579421897378416,
+      "universe": "pit_liquid_100"
+    }
+  ],
+  "position_diagnostics": {
+    "bootstrap_95pct_return": [
+      -0.002551271980163788,
+      0.12000888092497547
+    ],
+    "bootstrap_positive_frequency": 0.96958,
+    "positions": 65,
+    "return_without_riot_and_mara": 0.03277714226310723,
+    "top_3_position_share_of_net_pnl": 0.40178316948524123,
+    "top_3_symbol_share_of_net_pnl": 0.5788288727859711,
+    "trade_sessions": 50,
+    "win_rate": 0.6
+  },
+  "universe": {
+    "asset_master_records": 33101,
+    "candidate_symbols": 6329,
+    "inactive_candidates": 914,
+    "monthly_snapshots": 89,
+    "selected_symbol_union": 324,
+    "stocks_per_snapshot": 100
+  }
+}

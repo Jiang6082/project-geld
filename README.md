@@ -17,6 +17,10 @@ the short-continuation follow-up is in `INTRADAY_V7_V9_RESEARCH.md`.
 The locked, order-free forward protocol is in `FORWARD_SHADOW.md`.
 V12 parameter, timing, concentration, and universe checks are in
 `INTRADAY_V12_STRESS.md`.
+The stronger causal-universe and IEX-versus-SIP validation is in
+`INTRADAY_V12_PIT_VALIDATION.md`. It rejects the fixed-current-basket IEX result
+as the primary evidence and promotes the point-in-time/SIP specification to the
+research control; V12 remains research-only.
 
 ## What is included
 

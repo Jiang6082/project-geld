@@ -7,6 +7,7 @@ import pandas as pd
 from project_geld.broad_universe import (
     BroadUniverseRules,
     asset_master_frame,
+    causal_membership_periods_from_monthly_selections,
     membership_periods_from_selections,
     monthly_candidate_rows,
     select_top_liquid,
@@ -74,3 +75,21 @@ def test_selections_become_membership_periods():
     )
     periods = membership_periods_from_selections(selected, month_ends, sessions)
     assert periods["AAA"] == [["2024-01-31", "2024-03-28"]]
+
+
+def test_causal_monthly_membership_starts_on_the_next_session():
+    sessions = pd.date_range("2024-01-02", "2024-04-02", freq="B", tz="UTC")
+    month_ends = pd.DatetimeIndex(
+        [
+            pd.Timestamp("2024-01-31", tz="UTC"),
+            pd.Timestamp("2024-02-29", tz="UTC"),
+            pd.Timestamp("2024-03-29", tz="UTC"),
+        ]
+    )
+    selected = pd.DataFrame(
+        {"timestamp": [month_ends[0], month_ends[1]], "symbol": ["AAA", "AAA"]}
+    )
+    periods = causal_membership_periods_from_monthly_selections(
+        selected, month_ends, sessions
+    )
+    assert periods["AAA"] == [["2024-02-01", "2024-03-29"]]

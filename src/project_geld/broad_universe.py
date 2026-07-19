@@ -184,3 +184,60 @@ def membership_periods_from_selections(
             )
         periods[str(symbol)] = symbol_periods
     return periods
+
+
+def causal_membership_periods_from_monthly_selections(
+    selected: pd.DataFrame,
+    month_end_sessions: pd.DatetimeIndex,
+    market_sessions: pd.DatetimeIndex,
+) -> dict[str, list[list[str | None]]]:
+    """Convert month-end selections into next-session-effective membership.
+
+    A selection observed at a month-end cannot be used by an intraday strategy
+    until the following trading session. If a name is absent at the next
+    month-end, it remains eligible through that month-end and is removed on the
+    following session.
+    """
+    month_ends = pd.DatetimeIndex(sorted(pd.to_datetime(month_end_sessions, utc=True)))
+    sessions = pd.DatetimeIndex(sorted(pd.to_datetime(market_sessions, utc=True)))
+    month_position = {timestamp: index for index, timestamp in enumerate(month_ends)}
+    periods: dict[str, list[list[str | None]]] = {}
+    for symbol, group in selected.groupby("symbol"):
+        positions = sorted(
+            {
+                month_position[timestamp]
+                for timestamp in pd.to_datetime(group["timestamp"], utc=True)
+                if timestamp in month_position
+            }
+        )
+        if not positions:
+            continue
+        runs: list[tuple[int, int]] = []
+        run_start = run_end = positions[0]
+        for position in positions[1:]:
+            if position == run_end + 1:
+                run_end = position
+            else:
+                runs.append((run_start, run_end))
+                run_start = run_end = position
+        runs.append((run_start, run_end))
+        symbol_periods: list[list[str | None]] = []
+        for start_position, end_position in runs:
+            after_selection = sessions[sessions > month_ends[start_position]]
+            if not len(after_selection):
+                continue
+            start = after_selection[0]
+            end = (
+                None
+                if end_position == len(month_ends) - 1
+                else month_ends[end_position + 1]
+            )
+            symbol_periods.append(
+                [
+                    start.strftime("%Y-%m-%d"),
+                    end.strftime("%Y-%m-%d") if end is not None else None,
+                ]
+            )
+        if symbol_periods:
+            periods[str(symbol)] = symbol_periods
+    return periods

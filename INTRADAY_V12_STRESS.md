@@ -1,5 +1,10 @@
 # Intraday V12 robustness study
 
+> Superseded evidence note: the later point-in-time IEX/SIP study in
+> `INTRADAY_V12_PIT_VALIDATION.md` shows that the fixed-current-universe IEX
+> result is feed-dependent. Use the PIT/SIP result as the current research
+> control.
+
 ## Purpose
 
 V12 improved the broad historical result to 2.61% with a 1.033 Sharpe, but it

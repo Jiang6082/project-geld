@@ -448,6 +448,19 @@ def test_intra_v12_can_delay_entry_without_changing_confirmation():
     assert strategy.entry_delay_bars == 1
 
 
+def test_intra_v12_accepts_point_in_time_membership():
+    strategy = IntraV12(
+        membership_periods={"AAPL": [["2026-01-01", "2026-12-31"]]}
+    )
+    assert "AAPL" in strategy.membership_periods
+    assert strategy.membership_mask(
+        pd.Timestamp("2026-06-01"), ["AAPL", "MSFT"]
+    ).to_dict() == {"AAPL": True, "MSFT": False}
+    assert not strategy.membership_mask(
+        pd.Timestamp("2027-01-01"), ["AAPL"]
+    ).at["AAPL"]
+
+
 class AlwaysIntradayLong:
     name = "always_intraday_long"
     warmup_bars = 0
