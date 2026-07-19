@@ -14,6 +14,7 @@ Alpaca credentials, state, risk limits, and performance logs. See
 `DUAL_ACCOUNT_PAPER.md` for the proposed allocation and exact commands.
 Long-horizon intraday findings are recorded in `LONG_INTRADAY_RESEARCH.md` and
 the short-continuation follow-up is in `INTRADAY_V7_V9_RESEARCH.md`.
+The locked, order-free forward protocol is in `FORWARD_SHADOW.md`.
 
 ## What is included
 

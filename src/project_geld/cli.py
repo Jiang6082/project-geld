@@ -33,6 +33,7 @@ from project_geld.paper import (
     run_paper_cycle,
 )
 from project_geld.strategies.registry import available_strategies, create_strategy
+from project_geld.shadow import AlpacaShadowMarket, run_shadow_cycle
 
 
 def _date(value: str | None, fallback: datetime) -> datetime:
@@ -345,6 +346,45 @@ def command_intraday_paper(args) -> None:
         print(result.orders.to_string(index=False))
 
 
+def command_intraday_shadow(args) -> None:
+    config = load_config(args.config)
+    validate_config(config)
+    strategy = create_strategy(config.strategy.name, config.strategy.parameters)
+    if not strategy.name.startswith("intra_v"):
+        raise ValueError("intraday-shadow-once requires an intraday strategy config.")
+    context = _strategy_context(strategy)
+    start, end = default_date_range(config.intraday.lookback_days)
+    source = AlpacaBarSource(config.data.feed, config.data.adjustment, config.account.credential_profile)
+    symbols = list(dict.fromkeys([*config.universe.data_symbols, *context]))
+    bars = resample_intraday_bars(
+        source.fetch(symbols, start, end, "1Min"),
+        config.intraday.bar_minutes,
+        config.backtest.session_timezone,
+    )
+    if bars.empty:
+        raise RuntimeError("No completed intraday bars are available.")
+    targets = strategy.generate_targets(bars)
+    latest_time = targets["timestamp"].max()
+    latest_targets = targets[targets["timestamp"].eq(latest_time)].copy()
+    state_path = Path(args.output) / "state.json"
+    pending_symbols = set()
+    if state_path.exists():
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+        pending_symbols |= set(state.get("pending_targets", {})) | set(state.get("positions", {}))
+    pending_symbols |= set(latest_targets.loc[latest_targets["target_weight"].lt(0), "symbol"])
+    market = AlpacaShadowMarket(config.account.credential_profile, config.data.feed)
+    quotes = market.quotes(sorted(pending_symbols))
+    availability = market.availability(sorted(pending_symbols))
+    prices = bars.sort_values("timestamp").groupby("symbol").tail(1).set_index("symbol")["close"].to_dict()
+    events = run_shadow_cycle(
+        targets, prices, quotes, availability, state_path, Path(args.output) / "events.csv",
+        capital=config.backtest.initial_cash, limit_offset_bps=config.paper.limit_offset_bps,
+    )
+    print(f"Shadow cycle {latest_time}: {len(events)} event(s); zero orders submitted.")
+    if len(events):
+        print(events.to_string(index=False))
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="geld", description="Project Geld research and Alpaca paper engine")
     parser.add_argument("--config", default="config.example.toml")
@@ -405,6 +445,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
     intraday_paper.add_argument("--output", default="artifacts/intraday-paper")
     intraday_paper.set_defaults(func=command_intraday_paper)
+    intraday_shadow = subparsers.add_parser("intraday-shadow-once")
+    intraday_shadow.add_argument("--output", default="artifacts/intraday-shadow")
+    intraday_shadow.set_defaults(func=command_intraday_shadow)
     return parser
 
 
