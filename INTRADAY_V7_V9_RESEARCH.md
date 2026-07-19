@@ -1,4 +1,4 @@
-# Intraday V7–V9 short-continuation research
+# Intraday V7–V10 short-continuation research
 
 ## Question and protocol
 
@@ -26,6 +26,8 @@ market impact are unavailable and could make real results worse.
   average and the current price is below the prior close.
 - **V9:** Apply V8 only when the signal-bar volume is at least 1.5 times its
   prior 20-session median for the same bar time.
+- **V10:** Apply V8 only when the morning dislocation is at least two times the
+  stock's own prior 20-session variability at the same signal time.
 
 All variants allow at most four names, 10% per name, and 40% gross exposure.
 
@@ -39,6 +41,7 @@ All variants allow at most four names, 10% per name, and 40% gross exposure.
 | V8 trend-aligned short, original 21 | 0.25% | 0.04% | 0.105 | -0.86% | 0.54x | 50 |
 | V8 trend-aligned short, broad 100 | 0.93% | 0.12% | 0.149 | -2.63% | 2.53x | 299 |
 | V9 volume-confirmed short, broad 100 | -1.25% | -0.17% | -0.219 | -2.48% | 1.62x | 195 |
+| V10 volatility-normalized short, broad 100 | -1.78% | -0.24% | -0.344 | -2.86% | 1.25x | 151 |
 | SPY buy and hold, broad dates | 153.66% | — | — | — | — | — |
 
 V8 is the best result but is not stable across time. Its broad calendar returns
@@ -50,7 +53,8 @@ positions across 55 stocks, with a 45.7% win rate and a negative median trade.
 V7's broad loss shows that unfiltered downside breakouts are not alpha. V8's
 daily trend filter removes a bad subset, but the remaining return is too small
 and recent-year-dependent. V9's failure shows that unusual volume does not
-repair the instability.
+repair the instability. V10's failure shows that normalizing by prior morning
+variability also removes useful trades without creating a stable edge.
 
 ## Decision
 

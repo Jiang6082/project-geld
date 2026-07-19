@@ -39,6 +39,7 @@ The locked, order-free forward protocol is in `FORWARD_SHADOW.md`.
   - `intra_v7`, opt-in confirmed short continuation;
   - `intra_v8`, its prior-daily-trend-aligned challenger;
   - `intra_v9`, a rejected unusual-volume confirmation experiment.
+  - `intra_v10`, a rejected volatility-normalized breakdown experiment.
 - Next-session-open backtests, avoiding same-close look-ahead fills.
 - Configurable slippage, per-share fees, fractional shares, and rebalance cadence.
 - Gross-exposure and per-position limits.

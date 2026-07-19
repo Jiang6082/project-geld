@@ -19,6 +19,7 @@ from project_geld.strategies.intra_v6 import IntraV6
 from project_geld.strategies.intra_v7 import IntraV7
 from project_geld.strategies.intra_v8 import IntraV8
 from project_geld.strategies.intra_v9 import IntraV9
+from project_geld.strategies.intra_v10 import IntraV10
 
 
 def minute_bars() -> pd.DataFrame:
@@ -385,6 +386,13 @@ def test_intra_v9_requires_unusual_signal_bar_volume():
     assert strategy.relative_volume_sessions == 20
     assert strategy.min_relative_volume == 1.5
     assert strategy.name == "intra_v9"
+
+
+def test_intra_v10_normalizes_dislocation_by_prior_variability():
+    strategy = IntraV10()
+    assert strategy.relative_volatility_sessions == 20
+    assert strategy.min_dislocation_sigma == 2.0
+    assert strategy.name == "intra_v10"
 
 
 class AlwaysIntradayLong:

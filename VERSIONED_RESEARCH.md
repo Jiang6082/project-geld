@@ -13,6 +13,7 @@ Canonical production-facing names use the trading horizon followed by a version:
 - `intra_v7`: opt-in confirmed downside continuation; paper-unsupported.
 - `intra_v8`: V7 aligned with a prior 20-session downtrend.
 - `intra_v9`: rejected V8 unusual-volume confirmation.
+- `intra_v10`: rejected V8 prior-volatility normalization.
 
 The old registry names `momentum_v4` and `intraday_momentum` remain aliases so
 old notebooks do not break. New configs and artifacts must use canonical names.
@@ -117,4 +118,5 @@ V8 is positive by 0.93% with a 0.149 Sharpe, but almost all profit occurs in
 partial 2026. V9 loses 1.25%. No version demonstrates stable alpha. Short
 targets are supported only by an opt-in backtest path; paper planning rejects
 them. See `INTRADAY_V7_V9_RESEARCH.md` for the protocol, limitations, and full
-comparison.
+comparison. V10 subsequently lost 1.78% with a -0.344 Sharpe, so the locked V8
+forward-shadow study remains unchanged.

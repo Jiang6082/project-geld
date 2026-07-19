@@ -32,6 +32,8 @@ class IntraV7:
     require_below_prior_close: bool = False
     relative_volume_sessions: int = 0
     min_relative_volume: float = 0.0
+    relative_volatility_sessions: int = 0
+    min_dislocation_sigma: float = 0.0
     timezone: str = "America/New_York"
     name: str = "intra_v7"
 
@@ -51,6 +53,8 @@ class IntraV7:
             raise ValueError("daily_trend_sessions cannot be negative.")
         if self.relative_volume_sessions < 0 or self.min_relative_volume < 0:
             raise ValueError("Relative-volume settings cannot be negative.")
+        if self.relative_volatility_sessions < 0 or self.min_dislocation_sigma < 0:
+            raise ValueError("Relative-volatility settings cannot be negative.")
         if _clock(self.signal_time) >= _clock(self.flatten_at):
             raise ValueError("signal_time must precede flatten_at.")
 
@@ -116,6 +120,16 @@ class IntraV7:
             if self.relative_volume_sessions
             else signal_volume
         )
+        signal_dislocation = -relative.loc[signal_rows].copy()
+        signal_dislocation.index = signal_volume.index
+        prior_dislocation_volatility = (
+            signal_dislocation.shift(1).rolling(
+                self.relative_volatility_sessions,
+                min_periods=self.relative_volatility_sessions,
+            ).std(ddof=0)
+            if self.relative_volatility_sessions
+            else signal_dislocation
+        )
         bar_minutes = self._infer_bar_minutes(close.index)
         confirmation_time = (
             pd.Timestamp.combine(pd.Timestamp.today(), _clock(self.signal_time))
@@ -163,13 +177,25 @@ class IntraV7:
                     volume_surge = relative_volume.ge(self.min_relative_volume)
                 else:
                     volume_surge = pd.Series(True, index=tradables)
-                qualified = scores[
+                if self.relative_volatility_sessions:
+                    dislocation_sigma = scores.div(
+                        prior_dislocation_volatility.loc[current_session, tradables]
+                    ).replace([np.inf, -np.inf], np.nan)
+                    unusual_dislocation = dislocation_sigma.ge(
+                        self.min_dislocation_sigma
+                    )
+                    ranking_scores = dislocation_sigma
+                else:
+                    unusual_dislocation = pd.Series(True, index=tradables)
+                    ranking_scores = scores
+                qualified = ranking_scores[
                     liquid
                     & dislocated
                     & below_vwap
                     & downtrend
                     & below_prior_close
                     & volume_surge
+                    & unusual_dislocation
                 ].dropna()
                 candidates = {
                     symbol: (float(score), float(low.at[timestamp, symbol]))
