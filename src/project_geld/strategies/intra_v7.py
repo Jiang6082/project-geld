@@ -26,6 +26,7 @@ class IntraV7:
     min_relative_dislocation: float = 0.01
     signal_time: str = "10:30"
     confirmation_bars: int = 1
+    entry_delay_bars: int = 0
     flatten_at: str = "15:45"
     require_benchmark_above_vwap: bool = True
     daily_trend_sessions: int = 0
@@ -43,6 +44,8 @@ class IntraV7:
         self.benchmark_symbol = self.benchmark_symbol.upper()
         if self.lookback_bars < 1 or self.top_n < 1 or self.confirmation_bars < 1:
             raise ValueError("lookback_bars, top_n, and confirmation_bars must be positive.")
+        if self.entry_delay_bars < 0:
+            raise ValueError("entry_delay_bars cannot be negative.")
         if not 0 < self.gross_exposure <= 1:
             raise ValueError("gross_exposure must be in (0, 1].")
         if not 0 < self.max_position_weight <= 1:
@@ -145,6 +148,12 @@ class IntraV7:
             pd.Timestamp.combine(pd.Timestamp.today(), _clock(self.signal_time))
             + pd.Timedelta(bar_minutes * self.confirmation_bars, unit="m")
         ).time()
+        entry_time = (
+            pd.Timestamp.combine(pd.Timestamp.today(), confirmation_time)
+            + pd.Timedelta(bar_minutes * self.entry_delay_bars, unit="m")
+        ).time()
+        if entry_time >= _clock(self.flatten_at):
+            raise ValueError("Delayed entry must precede flatten_at.")
 
         current_session = None
         candidates: dict[str, tuple[float, float]] = {}
@@ -231,9 +240,10 @@ class IntraV7:
                 selected = [symbol for symbol, _ in confirmed[: self.top_n]] if market_ok else []
             if local_time >= _clock(self.flatten_at):
                 selected = []
+            active = selected if local_time >= entry_time else []
             weight = min(
                 self.max_position_weight,
-                self.gross_exposure / len(selected) if selected else 0.0,
+                self.gross_exposure / len(active) if active else 0.0,
             )
             for symbol in tradables:
                 score = scores.get(symbol, np.nan)
@@ -241,7 +251,7 @@ class IntraV7:
                     {
                         "timestamp": timestamp,
                         "symbol": symbol,
-                        "target_weight": -weight if symbol in selected else 0.0,
+                        "target_weight": -weight if symbol in active else 0.0,
                         "score": float(score) if pd.notna(score) else float("nan"),
                     }
                 )

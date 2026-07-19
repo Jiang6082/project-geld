@@ -375,6 +375,19 @@ def test_intra_v7_waits_for_a_break_below_the_signal_bar_low():
     assert confirmation.set_index("symbol").at["RECOVERS", "target_weight"] == 0.0
     assert flatten["target_weight"].eq(0).all()
 
+    delayed = IntraV7(
+        top_n=1,
+        gross_exposure=0.1,
+        max_position_weight=0.1,
+        min_relative_dislocation=0.003,
+        require_benchmark_above_vwap=False,
+        entry_delay_bars=1,
+    ).generate_targets(pd.DataFrame(rows))
+    delayed_confirmation = delayed[delayed["timestamp"].eq(timestamps[5])]
+    delayed_entry = delayed[delayed["timestamp"].eq(timestamps[6])]
+    assert delayed_confirmation["target_weight"].eq(0).all()
+    assert delayed_entry.set_index("symbol").at["BREAKS", "target_weight"] == -0.1
+
 
 def test_intra_v8_requires_a_prior_daily_downtrend():
     strategy = IntraV8()
@@ -427,6 +440,12 @@ def test_intra_v12_requires_quiet_volume_and_a_decisive_break():
     assert strategy.max_relative_volume == 1.5
     assert strategy.min_confirmation_break == 0.0025
     assert strategy.name == "intra_v12"
+
+
+def test_intra_v12_can_delay_entry_without_changing_confirmation():
+    strategy = IntraV12(entry_delay_bars=1)
+    assert strategy.confirmation_bars == 1
+    assert strategy.entry_delay_bars == 1
 
 
 class AlwaysIntradayLong:

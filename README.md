@@ -15,6 +15,8 @@ Alpaca credentials, state, risk limits, and performance logs. See
 Long-horizon intraday findings are recorded in `LONG_INTRADAY_RESEARCH.md` and
 the short-continuation follow-up is in `INTRADAY_V7_V9_RESEARCH.md`.
 The locked, order-free forward protocol is in `FORWARD_SHADOW.md`.
+V12 parameter, timing, concentration, and universe checks are in
+`INTRADAY_V12_STRESS.md`.
 
 ## What is included
 

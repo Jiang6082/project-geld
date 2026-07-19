@@ -77,6 +77,13 @@ quiet-volume/deeper-break hypothesis was developed after inspecting V8 outcomes
 on this same dataset. Its split diagnostic was directionally consistent, but it
 is not untouched out-of-sample evidence.
 
+The follow-up stress study in `INTRADAY_V12_STRESS.md` found positive results
+for both nearby volume caps, both nearby break thresholds, a 15-minute delayed
+entry, a 15:00 exit, two non-overlapping liquidity-balanced universe halves,
+and an 85-stock common-history subset. These checks improve confidence that the
+backtest is not a single-threshold accident, but they do not remove the small-
+sample or fixed-universe biases.
+
 ## Decision
 
 V12 replaces V8 as the best historical research challenger, but it does not yet
