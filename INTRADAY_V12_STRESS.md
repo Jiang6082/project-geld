@@ -59,11 +59,54 @@ company's public history. Adjusted historical data may represent a predecessor,
 SPAC, or ticker mapping rather than the security intended by the current
 universe row.
 
+## Extended timing and concentration tests
+
+| Exact backtest | Total return | Sharpe | Max drawdown | Positions |
+|---|---:|---:|---:|---:|
+| Signal at 10:15 | 0.90% | 0.292 | -1.29% | 37 |
+| Baseline signal at 10:30 | 2.61% | 1.033 | -0.21% | 19 |
+| Signal at 10:45 | -0.29% | -0.107 | -1.37% | 22 |
+| Signal at 11:00 | 1.12% | 0.283 | -1.34% | 17 |
+| Exit at 12:00 | 1.06% | 0.659 | -0.23% | 19 |
+| Exit at 13:30 | 2.68% | 1.111 | -0.12% | 19 |
+| Exit at 15:00 | 2.37% | 1.115 | -0.10% | 19 |
+| Exclude IREN, AAOI, and RKLB | 0.91% | 0.578 | -0.21% | 15 |
+
+Holding-period evidence is reasonably stable: profit is present by noon and is
+retained through multiple afternoon exits. The signal-time evidence is weaker.
+The 10:15 and 11:00 variants remain positive but have much worse drawdown and
+Sharpe, while 10:45 is negative. The strong baseline result is therefore
+localized around 10:30 rather than invariant across the morning. Removing the
+three largest contributor symbols leaves the strategy positive, so those names
+do not solely create the result.
+
+## Statistical and execution simulations
+
+A 100,000-sample session-block bootstrap produces a 95% portfolio-return range
+of approximately 1.03% to 4.26%, with 99.96% positive resamples. V12's mean
+selected-position return exceeds 98.7% of random 19-position subsets drawn
+without replacement from V8's 94 completed positions; the descriptive one-sided
+randomization probability is 1.26%.
+
+A conservative simulation independently applies 80% short availability, 85%
+fill probability, 8–40 basis points of one-way slippage, and 5–50% annualized
+borrow rates. It produces a median 1.28% return, a 5th percentile of 0.40%, and
+99.3% positive trials. A severe scenario with 60% availability, 70% fills,
+8–75 basis points of slippage, and 20–100% borrow rates produces a median 0.40%,
+a negative 5th percentile of -0.39%, and 78.6% positive trials.
+
+These simulations condition on the researched V12 trade sample. They measure
+trade concentration and execution sensitivity, not data-mining-adjusted
+statistical significance. The bootstrap and randomization probabilities must
+not be read as proof of out-of-sample alpha.
+
 ## Verdict
 
-V12 passes this round of parameter, timing, concentration, and split-universe
-stress. It is more robust than V8 and remains the current intraday research
-leader. It still does not establish true alpha: 19 positions are too few, the
+V12 passes parameter, holding-period, concentration, execution, and
+split-universe stress. It is more robust than V8 and remains the current
+intraday research leader. Signal-time sensitivity is a new material weakness:
+the strategy is much stronger at 10:30 than at nearby observation times. It
+still does not establish true alpha: 19 baseline positions are too few, the
 universe is selected with 2026 knowledge, histories are not fully point-in-time,
 and V12 was developed after examining this sample. Paper execution remains
 disabled until short-order controls and symbol-history validation are added.
