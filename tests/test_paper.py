@@ -118,6 +118,21 @@ def test_daily_loss_guard_blocks_paper_plan():
         )
 
 
+def test_short_targets_are_rejected_by_paper_planner():
+    latest = targets().copy()
+    latest.loc[latest["symbol"].eq("AAPL"), "target_weight"] = -0.1
+    with pytest.raises(RuntimeError, match="does not support short targets"):
+        build_rebalance_orders(
+            latest,
+            {"AAPL": 200, "MSFT": 400, "SPY": 500},
+            AccountSnapshot(100_000, 100_000, {}, set(), cash=100_000),
+            RiskConfig(),
+            "geld",
+            "intra_v7",
+            pd.Timestamp("2025-01-02", tz="UTC"),
+        )
+
+
 def test_unmanaged_positions_reduce_available_gross_exposure():
     snapshot = AccountSnapshot(
         equity=100_000,

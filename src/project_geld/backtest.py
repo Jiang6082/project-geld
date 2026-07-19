@@ -27,7 +27,9 @@ TRADE_COLUMNS = [
 ]
 
 
-def _constrain_weights(targets: pd.Series, risk: RiskConfig) -> pd.Series:
+def _constrain_weights(
+    targets: pd.Series, risk: RiskConfig, allow_short: bool = False
+) -> pd.Series:
     caps = pd.Series(
         {
             symbol: risk.symbol_position_weight_limits.get(
@@ -36,9 +38,13 @@ def _constrain_weights(targets: pd.Series, risk: RiskConfig) -> pd.Series:
             for symbol in targets.index
         }
     )
-    weights = targets.fillna(0.0).clip(lower=0.0)
-    weights = weights.where(weights.le(caps), caps)
-    gross = float(weights.sum())
+    weights = targets.fillna(0.0)
+    weights = (
+        weights.clip(lower=-caps, upper=caps)
+        if allow_short
+        else weights.clip(lower=0.0, upper=caps)
+    )
+    gross = float(weights.abs().sum())
     if gross > risk.max_gross_exposure:
         weights *= risk.max_gross_exposure / gross
     return weights
@@ -48,6 +54,11 @@ def _quantity(value: float, fractional: bool) -> float:
     if fractional:
         return round(max(value, 0.0), 6)
     return float(np.floor(max(value, 0.0)))
+
+
+def _signed_quantity(value: float, fractional: bool) -> float:
+    direction = -1.0 if value < 0 else 1.0
+    return direction * _quantity(abs(value), fractional)
 
 
 def run_backtest(
@@ -102,7 +113,7 @@ def run_backtest(
 
         if pending is not None:
             signal_timestamp, raw_weights = pending
-            weights = _constrain_weights(raw_weights, risk)
+            weights = _constrain_weights(raw_weights, risk, config.allow_short)
             equity_at_open = cash + sum(
                 quantity * valuation_prices.get(symbol, last_prices.get(symbol, 0.0))
                 for symbol, quantity in shares.items()
@@ -112,7 +123,10 @@ def run_backtest(
                 price = float(open_prices.get(symbol, np.nan))
                 if not np.isfinite(price) or price <= 0:
                     continue
-                desired[symbol] = _quantity(float(weights.get(symbol, 0.0)) * equity_at_open / price, config.allow_fractional)
+                desired[symbol] = _signed_quantity(
+                    float(weights.get(symbol, 0.0)) * equity_at_open / price,
+                    config.allow_fractional,
+                )
 
             deltas = {symbol: desired.get(symbol, 0.0) - shares.get(symbol, 0.0) for symbol in set(shares) | set(desired)}
             ordered = sorted(deltas, key=lambda symbol: deltas[symbol])
@@ -124,8 +138,7 @@ def run_backtest(
                 side = "sell" if delta < 0 else "buy"
                 slip = config.slippage_bps / 10_000
                 fill_price = market_open * (1 - slip if side == "sell" else 1 + slip)
-                quantity = min(abs(delta), shares.get(symbol, 0.0)) if side == "sell" else abs(delta)
-                quantity = _quantity(quantity, config.allow_fractional)
+                quantity = _quantity(abs(delta), config.allow_fractional)
                 minimum_trade = max(
                     risk.min_trade_notional,
                     risk.min_trade_pct_equity * equity_at_open,
@@ -134,8 +147,12 @@ def run_backtest(
                     continue
                 fees = quantity * config.commission_per_share
                 if side == "buy":
-                    affordable = _quantity(cash / (fill_price + config.commission_per_share), config.allow_fractional)
-                    quantity = min(quantity, affordable)
+                    if not config.allow_short:
+                        affordable = _quantity(
+                            cash / (fill_price + config.commission_per_share),
+                            config.allow_fractional,
+                        )
+                        quantity = min(quantity, affordable)
                     fees = quantity * config.commission_per_share
                     if quantity <= 0:
                         continue
@@ -144,7 +161,7 @@ def run_backtest(
                 else:
                     cash += quantity * fill_price - fees
                     remaining = shares.get(symbol, 0.0) - quantity
-                    if remaining <= 1e-9:
+                    if abs(remaining) <= 1e-9:
                         shares.pop(symbol, None)
                     else:
                         shares[symbol] = remaining
@@ -171,17 +188,27 @@ def run_backtest(
                 and last_seen is not None
                 and session_index - last_seen >= config.missing_price_exit_sessions
             ):
-                quantity = shares.pop(symbol)
+                signed_quantity = shares.pop(symbol)
+                quantity = abs(signed_quantity)
                 reference_price = last_prices.get(symbol, 0.0)
-                fill_price = reference_price * (1 - config.missing_price_haircut_pct)
+                side = "sell" if signed_quantity > 0 else "buy"
+                fill_price = reference_price * (
+                    1 - config.missing_price_haircut_pct
+                    if side == "sell"
+                    else 1 + config.missing_price_haircut_pct
+                )
                 fees = quantity * config.commission_per_share
-                cash += quantity * fill_price - fees
+                cash += (
+                    quantity * fill_price - fees
+                    if side == "sell"
+                    else -quantity * fill_price - fees
+                )
                 trade_rows.append(
                     {
                         "signal_timestamp": timestamp,
                         "timestamp": timestamp,
                         "symbol": symbol,
-                        "side": "sell",
+                        "side": side,
                         "quantity": quantity,
                         "fill_price": fill_price,
                         "notional": quantity * fill_price,
@@ -194,20 +221,30 @@ def run_backtest(
         last_prices.update({symbol: float(price) for symbol, price in close_prices.items()})
         last_seen_session.update({symbol: session_index for symbol in close_prices.index})
         if config.force_flat_at_session_end and timestamp in session_ends:
-            for symbol, quantity in list(shares.items()):
+            for symbol, signed_quantity in list(shares.items()):
                 market_close = float(close_prices.get(symbol, np.nan))
                 if not np.isfinite(market_close) or market_close <= 0:
                     continue
-                fill_price = market_close * (1 - config.slippage_bps / 10_000)
+                quantity = abs(signed_quantity)
+                side = "sell" if signed_quantity > 0 else "buy"
+                fill_price = market_close * (
+                    1 - config.slippage_bps / 10_000
+                    if side == "sell"
+                    else 1 + config.slippage_bps / 10_000
+                )
                 fees = quantity * config.commission_per_share
-                cash += quantity * fill_price - fees
+                cash += (
+                    quantity * fill_price - fees
+                    if side == "sell"
+                    else -quantity * fill_price - fees
+                )
                 shares.pop(symbol, None)
                 trade_rows.append(
                     {
                         "signal_timestamp": timestamp,
                         "timestamp": timestamp,
                         "symbol": symbol,
-                        "side": "sell",
+                        "side": side,
                         "quantity": quantity,
                         "fill_price": fill_price,
                         "notional": quantity * fill_price,
@@ -217,13 +254,17 @@ def run_backtest(
                     }
                 )
         position_value = sum(quantity * last_prices.get(symbol, 0.0) for symbol, quantity in shares.items())
+        gross_position_value = sum(
+            abs(quantity * last_prices.get(symbol, 0.0))
+            for symbol, quantity in shares.items()
+        )
         equity_value = cash + position_value
         equity_rows.append(
             {
                 "timestamp": timestamp,
                 "equity": equity_value,
                 "cash": cash,
-                "gross_exposure": position_value / equity_value if equity_value > 0 else 0.0,
+                "gross_exposure": gross_position_value / equity_value if equity_value > 0 else 0.0,
             }
         )
 

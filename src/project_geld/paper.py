@@ -112,7 +112,12 @@ def _floor_quantity(quantity: float) -> float:
 def _safe_targets(
     latest: pd.DataFrame, risk: RiskConfig, available_gross: float
 ) -> pd.Series:
-    weights = latest.set_index("symbol")["target_weight"].clip(lower=0.0)
+    raw_weights = latest.set_index("symbol")["target_weight"]
+    if raw_weights.lt(0).any():
+        raise RuntimeError(
+            "Paper planning does not support short targets; no orders planned."
+        )
+    weights = raw_weights.clip(lower=0.0)
     caps = pd.Series(
         {
             symbol: risk.symbol_position_weight_limits.get(

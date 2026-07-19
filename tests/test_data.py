@@ -1,6 +1,6 @@
 import pandas as pd
 
-from project_geld.data import BAR_COLUMNS, normalize_bars
+from project_geld.data import BAR_COLUMNS, CachedBarSource, normalize_bars
 
 
 def test_normalize_bars_sorts_and_deduplicates():
@@ -26,3 +26,32 @@ def test_normalize_bars_rejects_incomplete_schema():
         assert "missing columns" in str(exc).lower()
     else:
         raise AssertionError("Expected a schema error.")
+
+
+def test_cached_source_batches_large_symbol_requests_and_reuses_cache(tmp_path):
+    class RecordingSource:
+        def __init__(self):
+            self.calls = []
+
+        def fetch(self, symbols, start, end, timeframe="1Day"):
+            self.calls.append(list(symbols))
+            return pd.DataFrame(
+                {
+                    "timestamp": pd.Timestamp("2026-01-02", tz="UTC"),
+                    "symbol": symbols,
+                    "open": 100.0,
+                    "high": 101.0,
+                    "low": 99.0,
+                    "close": 100.0,
+                    "volume": 1_000_000,
+                }
+            )
+
+    source = RecordingSource()
+    cached = CachedBarSource(source, tmp_path, batch_size=2)
+    symbols = ["A", "B", "C", "D", "E"]
+    first = cached.fetch(symbols, pd.Timestamp("2026-01-01"), pd.Timestamp("2026-01-03"))
+    second = cached.fetch(symbols, pd.Timestamp("2026-01-01"), pd.Timestamp("2026-01-03"))
+    assert source.calls == [["A", "B"], ["C", "D"], ["E"]]
+    assert set(first["symbol"]) == set(symbols)
+    pd.testing.assert_frame_equal(first, second)

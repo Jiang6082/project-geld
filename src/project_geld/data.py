@@ -29,7 +29,9 @@ def normalize_bars(frame: pd.DataFrame) -> pd.DataFrame:
     if missing:
         raise ValueError(f"Bar data is missing columns: {sorted(missing)}")
     bars = frame[BAR_COLUMNS].copy()
-    bars["timestamp"] = pd.to_datetime(bars["timestamp"], utc=True)
+    bars["timestamp"] = pd.to_datetime(bars["timestamp"], utc=True).astype(
+        "datetime64[ns, UTC]"
+    )
     bars["symbol"] = bars["symbol"].astype(str).str.upper()
     for column in ["open", "high", "low", "close", "volume"]:
         bars[column] = pd.to_numeric(bars[column], errors="coerce")
@@ -170,14 +172,15 @@ class AlpacaBarSource:
 class CachedBarSource:
     source: BarSource
     cache_dir: Path
+    batch_size: int = 25
 
-    def fetch(
+    def _path(
         self,
         symbols: list[str],
         start: datetime,
         end: datetime,
-        timeframe: str = "1Day",
-    ) -> pd.DataFrame:
+        timeframe: str,
+    ) -> Path:
         signature = "|".join(
             [
                 ",".join(sorted(symbol.upper() for symbol in symbols)),
@@ -188,11 +191,39 @@ class CachedBarSource:
             ]
         )
         digest = sha256(signature.encode("utf-8")).hexdigest()[:16]
+        return self.cache_dir / f"bars_{digest}.csv"
+
+    def fetch(
+        self,
+        symbols: list[str],
+        start: datetime,
+        end: datetime,
+        timeframe: str = "1Day",
+    ) -> pd.DataFrame:
         self.cache_dir.mkdir(parents=True, exist_ok=True)
-        path = self.cache_dir / f"bars_{digest}.csv"
+        path = self._path(symbols, start, end, timeframe)
         if path.exists():
             return normalize_bars(pd.read_csv(path))
-        bars = self.source.fetch(symbols, start, end, timeframe)
+        if self.batch_size > 0 and len(symbols) > self.batch_size:
+            frames: list[pd.DataFrame] = []
+            for offset in range(0, len(symbols), self.batch_size):
+                batch = symbols[offset : offset + self.batch_size]
+                batch_path = self._path(batch, start, end, timeframe)
+                if batch_path.exists():
+                    frame = normalize_bars(pd.read_csv(batch_path))
+                else:
+                    frame = self.source.fetch(batch, start, end, timeframe)
+                    if not frame.empty:
+                        frame.to_csv(batch_path, index=False)
+                if not frame.empty:
+                    frames.append(frame)
+            bars = (
+                normalize_bars(pd.concat(frames, ignore_index=True))
+                if frames
+                else pd.DataFrame(columns=BAR_COLUMNS)
+            )
+        else:
+            bars = self.source.fetch(symbols, start, end, timeframe)
         if not bars.empty:
             bars.to_csv(path, index=False)
         return bars

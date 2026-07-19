@@ -10,6 +10,9 @@ Canonical production-facing names use the trading horizon followed by a version:
 - `intra_v4`: relative-continuation test using V3's allocation controls; rejected.
 - `intra_v5`: delayed recovery confirmation after a 0.60% relative dislocation.
 - `intra_v6`: stricter confirmed reversal requiring a 1.00% relative dislocation.
+- `intra_v7`: opt-in confirmed downside continuation; paper-unsupported.
+- `intra_v8`: V7 aligned with a prior 20-session downtrend.
+- `intra_v9`: rejected V8 unusual-volume confirmation.
 
 The old registry names `momentum_v4` and `intraday_momentum` remain aliases so
 old notebooks do not break. New configs and artifacts must use canonical names.
@@ -106,3 +109,12 @@ V6 is a substantial rejection-quality improvement, not demonstrated alpha. It
 earns only 0.69% total before costs, turns negative at eight bps, trades on 61
 sessions, and remains paper-disabled. The small grid that produced V6 used this
 same history, so the result is in-sample and requires new forward evidence.
+
+## Intra V7 through V9 short-continuation follow-up
+
+The broad 100-stock transfer rejects V6 and V7 at eight-basis-point slippage.
+V8 is positive by 0.93% with a 0.149 Sharpe, but almost all profit occurs in
+partial 2026. V9 loses 1.25%. No version demonstrates stable alpha. Short
+targets are supported only by an opt-in backtest path; paper planning rejects
+them. See `INTRADAY_V7_V9_RESEARCH.md` for the protocol, limitations, and full
+comparison.

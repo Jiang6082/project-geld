@@ -49,6 +49,7 @@ class BacktestConfig:
     missing_price_haircut_pct: float = 0.25
     force_flat_at_session_end: bool = False
     session_timezone: str = "America/New_York"
+    allow_short: bool = False
 
 
 @dataclass(frozen=True)

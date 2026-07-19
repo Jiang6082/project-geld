@@ -12,7 +12,8 @@ The platform also supports an isolated dual-account paper workflow: a slower
 Daily V4 account and a separate 15-minute Intra V1 account with independent
 Alpaca credentials, state, risk limits, and performance logs. See
 `DUAL_ACCOUNT_PAPER.md` for the proposed allocation and exact commands.
-Long-horizon intraday findings are recorded in `LONG_INTRADAY_RESEARCH.md`.
+Long-horizon intraday findings are recorded in `LONG_INTRADAY_RESEARCH.md` and
+the short-continuation follow-up is in `INTRADAY_V7_V9_RESEARCH.md`.
 
 ## What is included
 
@@ -34,6 +35,9 @@ Long-horizon intraday findings are recorded in `LONG_INTRADAY_RESEARCH.md`.
   - `intra_v4`, a rejected relative-continuation experiment;
   - `intra_v5`, delayed recovery confirmation;
   - `intra_v6`, a research-only selective confirmed-reversal challenger.
+  - `intra_v7`, opt-in confirmed short continuation;
+  - `intra_v8`, its prior-daily-trend-aligned challenger;
+  - `intra_v9`, a rejected unusual-volume confirmation experiment.
 - Next-session-open backtests, avoiding same-close look-ahead fills.
 - Configurable slippage, per-share fees, fractional shares, and rebalance cadence.
 - Gross-exposure and per-position limits.
@@ -187,11 +191,12 @@ order idempotency inputs, and the daily-loss guard.
 
 ## Current scope
 
-Version 0.1 is long-only and supports daily and intraday research. Momentum V2 can accept point-in-time
-membership periods for survivorship stress tests. The engine does not yet
-implement borrow/shorting, tick/order-book event simulation, factor attribution, a
-distributed experiment scheduler, or a persistent paper daemon. Those are
-appropriate later phases after the daily research loop is trusted.
+Version 0.1 supports daily and intraday research. Intraday backtests can opt in
+to signed short targets; paper execution remains long-only and rejects negative
+weights. Momentum V2 can accept point-in-time membership periods for
+survivorship stress tests. The engine does not model historical borrow
+availability, locate fees, tick/order-book events, factor attribution, a
+distributed experiment scheduler, or a persistent paper daemon.
 
 ## Current research
 

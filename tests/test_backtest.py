@@ -17,6 +17,17 @@ class AlwaysLong:
         return targets
 
 
+class AlwaysShort:
+    name = "always_short"
+    warmup_bars = 0
+
+    def generate_targets(self, bars):
+        targets = bars[["timestamp", "symbol"]].copy()
+        targets["target_weight"] = -0.5
+        targets["score"] = -1.0
+        return targets
+
+
 class RequiresBenchmarkContext:
     name = "requires_benchmark_context"
     warmup_bars = 0
@@ -154,3 +165,32 @@ def test_missing_symbol_is_forced_out_with_conservative_haircut():
     ]
     assert len(forced) == 1
     assert forced.iloc[0]["fill_price"] == 111 * 0.75
+
+
+def test_short_targets_require_opt_in_and_profit_when_price_falls():
+    bars = simple_bars().copy()
+    bars[["open", "high", "low", "close"]] = [
+        [100, 101, 99, 100],
+        [95, 96, 94, 95],
+        [90, 91, 89, 90],
+        [85, 86, 84, 85],
+        [80, 81, 79, 80],
+    ]
+    blocked = run_backtest(
+        bars,
+        AlwaysShort(),
+        BacktestConfig(initial_cash=10_000, slippage_bps=0),
+        RiskConfig(),
+    )
+    assert blocked.trades.empty
+
+    result = run_backtest(
+        bars,
+        AlwaysShort(),
+        BacktestConfig(initial_cash=10_000, slippage_bps=0, allow_short=True),
+        RiskConfig(max_position_weight=0.5, max_gross_exposure=0.5),
+    )
+    assert result.trades.iloc[0]["side"] == "sell"
+    assert result.trades.iloc[0]["target_weight"] == -0.5
+    assert result.equity.iloc[-1]["equity"] > 10_000
+    assert result.equity["gross_exposure"].max() <= 0.500001
