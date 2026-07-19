@@ -37,6 +37,11 @@ class IntraV7:
     min_confirmation_break: float = 0.0
     relative_volatility_sessions: int = 0
     min_dislocation_sigma: float = 0.0
+    daily_volatility_sessions: int = 0
+    max_annualized_daily_volatility: float = 0.0
+    min_market_breadth: float = 0.0
+    correlation_lookback_sessions: int = 0
+    max_pairwise_correlation: float = 1.0
     membership_periods: dict[str, list[list[str | None]]] = field(
         default_factory=dict
     )
@@ -71,6 +76,17 @@ class IntraV7:
             raise ValueError("min_confirmation_break must be in [0, 1).")
         if self.relative_volatility_sessions < 0 or self.min_dislocation_sigma < 0:
             raise ValueError("Relative-volatility settings cannot be negative.")
+        if (
+            self.daily_volatility_sessions < 0
+            or self.max_annualized_daily_volatility < 0
+        ):
+            raise ValueError("Daily-volatility settings cannot be negative.")
+        if not 0 <= self.min_market_breadth <= 1:
+            raise ValueError("min_market_breadth must be in [0, 1].")
+        if self.correlation_lookback_sessions < 0:
+            raise ValueError("correlation_lookback_sessions cannot be negative.")
+        if not -1 <= self.max_pairwise_correlation <= 1:
+            raise ValueError("max_pairwise_correlation must be in [-1, 1].")
         if _clock(self.signal_time) >= _clock(self.flatten_at):
             raise ValueError("signal_time must precede flatten_at.")
 
@@ -108,6 +124,16 @@ class IntraV7:
             ).mean()
             if self.daily_trend_sessions
             else prior_session_close
+        )
+        prior_daily_returns = prior_session_close.pct_change(fill_method=None)
+        annualized_daily_volatility = (
+            prior_daily_returns.rolling(
+                self.daily_volatility_sessions,
+                min_periods=self.daily_volatility_sessions,
+            ).std(ddof=0)
+            * np.sqrt(252.0)
+            if self.daily_volatility_sessions
+            else prior_daily_returns
         )
         horizon_return = close.groupby(sessions).pct_change(
             self.lookback_bars, fill_method=None
@@ -213,6 +239,15 @@ class IntraV7:
                 else:
                     unusual_dislocation = pd.Series(True, index=tradables)
                     ranking_scores = scores
+                if (
+                    self.daily_volatility_sessions
+                    and self.max_annualized_daily_volatility
+                ):
+                    stable_volatility = annualized_daily_volatility.loc[
+                        current_session, tradables
+                    ].le(self.max_annualized_daily_volatility)
+                else:
+                    stable_volatility = pd.Series(True, index=tradables)
                 qualified = ranking_scores[
                     member
                     & liquid
@@ -222,6 +257,7 @@ class IntraV7:
                     & below_prior_close
                     & volume_surge
                     & unusual_dislocation
+                    & stable_volatility
                 ].dropna()
                 candidates = {
                     symbol: (float(score), float(low.at[timestamp, symbol]))
@@ -235,6 +271,14 @@ class IntraV7:
                     if self.require_benchmark_above_vwap
                     else True
                 )
+                if self.min_market_breadth:
+                    members = self.membership_mask(current_session, tradables)
+                    breadth = close.loc[timestamp, tradables][members].ge(
+                        vwap.loc[timestamp, tradables][members]
+                    ).mean()
+                    market_ok &= bool(
+                        pd.notna(breadth) and breadth >= self.min_market_breadth
+                    )
                 confirmed = [
                     (symbol, score)
                     for symbol, (score, signal_low) in candidates.items()
@@ -242,7 +286,15 @@ class IntraV7:
                     < signal_low * (1.0 - self.min_confirmation_break)
                 ]
                 confirmed.sort(key=lambda item: item[1], reverse=True)
-                selected = [symbol for symbol, _ in confirmed[: self.top_n]] if market_ok else []
+                selected = (
+                    self.diversified_selection(
+                        confirmed,
+                        prior_daily_returns,
+                        current_session,
+                    )
+                    if market_ok
+                    else []
+                )
             if local_time >= _clock(self.flatten_at):
                 selected = []
             active = selected if local_time >= entry_time else []
@@ -261,6 +313,31 @@ class IntraV7:
                     }
                 )
         return pd.DataFrame.from_records(records, columns=TARGET_COLUMNS)
+
+    def diversified_selection(
+        self,
+        ranked: list[tuple[str, float]],
+        prior_daily_returns: pd.DataFrame,
+        session_date: object,
+    ) -> list[str]:
+        if not self.correlation_lookback_sessions:
+            return [symbol for symbol, _ in ranked[: self.top_n]]
+        selected: list[str] = []
+        history = prior_daily_returns.loc[:session_date].tail(
+            self.correlation_lookback_sessions
+        )
+        for symbol, _ in ranked:
+            if len(selected) >= self.top_n:
+                break
+            if not selected:
+                selected.append(symbol)
+                continue
+            correlations = history[[symbol, *selected]].corr().loc[
+                symbol, selected
+            ]
+            if correlations.dropna().le(self.max_pairwise_correlation).all():
+                selected.append(symbol)
+        return selected
 
     def membership_mask(
         self, session_date: object, symbols: list[str]

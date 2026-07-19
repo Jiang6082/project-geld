@@ -22,6 +22,7 @@ from project_geld.strategies.intra_v9 import IntraV9
 from project_geld.strategies.intra_v10 import IntraV10
 from project_geld.strategies.intra_v11 import FEATURE_COLUMNS, IntraV11
 from project_geld.strategies.intra_v12 import IntraV12
+from project_geld.strategies.intra_v13 import IntraV13
 
 
 def minute_bars() -> pd.DataFrame:
@@ -459,6 +460,38 @@ def test_intra_v12_accepts_point_in_time_membership():
     assert not strategy.membership_mask(
         pd.Timestamp("2027-01-01"), ["AAPL"]
     ).at["AAPL"]
+
+
+def test_intra_v13_enables_causal_risk_and_diversification_controls():
+    strategy = IntraV13()
+    assert strategy.daily_volatility_sessions == 20
+    assert strategy.max_annualized_daily_volatility == 1.50
+    assert strategy.min_market_breadth == 0.45
+    assert strategy.correlation_lookback_sessions == 60
+    assert strategy.max_pairwise_correlation == 0.85
+
+
+def test_intra_v13_skips_a_highly_correlated_second_candidate():
+    strategy = IntraV13(
+        top_n=2,
+        gross_exposure=0.2,
+        correlation_lookback_sessions=4,
+        max_pairwise_correlation=0.75,
+    )
+    returns = pd.DataFrame(
+        {
+            "AAA": [0.01, -0.02, 0.03, -0.01],
+            "BBB": [0.01, -0.02, 0.03, -0.01],
+            "CCC": [-0.02, -0.01, 0.01, 0.02],
+        },
+        index=pd.date_range("2026-01-01", periods=4),
+    )
+    selected = strategy.diversified_selection(
+        [("AAA", 3.0), ("BBB", 2.0), ("CCC", 1.0)],
+        returns,
+        returns.index[-1],
+    )
+    assert selected == ["AAA", "CCC"]
 
 
 class AlwaysIntradayLong:

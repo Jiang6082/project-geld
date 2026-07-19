@@ -21,6 +21,9 @@ The stronger causal-universe and IEX-versus-SIP validation is in
 `INTRADAY_V12_PIT_VALIDATION.md`. It rejects the fixed-current-basket IEX result
 as the primary evidence and promotes the point-in-time/SIP specification to the
 research control; V12 remains research-only.
+`INTRADAY_V13_RESEARCH.md` adds causal volatility, breadth, and correlation
+controls. V13 improves the point-in-time result across SIP, IEX, extended
+history, and cost stress, and is the current intraday research challenger.
 
 ## What is included
 
@@ -47,7 +50,9 @@ research control; V12 remains research-only.
   - `intra_v9`, a rejected unusual-volume confirmation experiment.
   - `intra_v10`, a rejected volatility-normalized breakdown experiment.
   - `intra_v11`, a rejected causal rolling-model filter.
-  - `intra_v12`, the current quiet-volume, decisive-break research challenger.
+  - `intra_v12`, the validated quiet-volume, decisive-break research control.
+  - `intra_v13`, the PIT/SIP V12 challenger with causal volatility, breadth,
+    and correlation controls.
 - Next-session-open backtests, avoiding same-close look-ahead fills.
 - Configurable slippage, per-share fees, fractional shares, and rebalance cadence.
 - Gross-exposure and per-position limits.

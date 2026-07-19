@@ -1,0 +1,134 @@
+{
+  "as_of": "2026-07-19",
+  "common_period": {
+    "end": "2026-07-17",
+    "start": "2020-07-27"
+  },
+  "final_parameters": {
+    "correlation_lookback_sessions": 60,
+    "daily_volatility_sessions": 20,
+    "max_annualized_daily_volatility": 1.5,
+    "max_pairwise_correlation": 0.85,
+    "min_market_breadth": 0.45
+  },
+  "matched_sip_comparison": [
+    {
+      "max_drawdown": -0.01843637318641711,
+      "positions": 65,
+      "sharpe": 0.7370711517001377,
+      "strategy": "intra_v12",
+      "total_return": 0.0579421897378416,
+      "win_rate": 0.6
+    },
+    {
+      "max_drawdown": -0.010334095051093617,
+      "positions": 45,
+      "sharpe": 0.9631686606847688,
+      "strategy": "intra_v13",
+      "total_return": 0.05907461121645152,
+      "win_rate": 0.6666666666666666
+    }
+  ],
+  "component_ablations": [
+    {
+      "max_drawdown": -0.015824606783091277,
+      "positions": 45,
+      "sharpe": 0.7486346340015094,
+      "total_return": 0.04233258929664552,
+      "variant": "volatility_only"
+    },
+    {
+      "max_drawdown": -0.015961854566878486,
+      "positions": 44,
+      "sharpe": 0.7185321150147344,
+      "total_return": 0.05183368369390928,
+      "variant": "breadth_only"
+    },
+    {
+      "max_drawdown": -0.015107857994157148,
+      "positions": 60,
+      "sharpe": 0.7215725176231537,
+      "total_return": 0.04954593096134796,
+      "variant": "correlation_only"
+    }
+  ],
+  "threshold_neighborhoods": [
+    {
+      "max_drawdown": -0.0010689611120916487,
+      "positions": 9,
+      "sharpe": 0.8383671801135651,
+      "total_return": 0.011323933548602616,
+      "variant": "strict"
+    },
+    {
+      "max_drawdown": -0.010334095051093617,
+      "positions": 25,
+      "sharpe": 0.8268063476414983,
+      "total_return": 0.037614794344645874,
+      "variant": "balanced"
+    },
+    {
+      "max_drawdown": -0.010334095084940542,
+      "positions": 45,
+      "sharpe": 0.9631686606847688,
+      "total_return": 0.05907461121645152,
+      "variant": "final_relaxed"
+    }
+  ],
+  "robustness": [
+    {
+      "feed": "sip",
+      "max_drawdown": -0.010334095051093617,
+      "period": "matched",
+      "positions": 45,
+      "sharpe": 0.9631686606847688,
+      "slippage_bps_one_way": 8.0,
+      "total_return": 0.05907461121645152
+    },
+    {
+      "feed": "sip",
+      "max_drawdown": -0.011691833147616792,
+      "period": "matched",
+      "positions": 45,
+      "sharpe": 0.8632457166098749,
+      "slippage_bps_one_way": 16.0,
+      "total_return": 0.05134818167458732
+    },
+    {
+      "feed": "sip",
+      "max_drawdown": -0.013204346786635401,
+      "period": "matched",
+      "positions": 45,
+      "sharpe": 0.756034190253059,
+      "slippage_bps_one_way": 24.0,
+      "total_return": 0.043676798236252035
+    },
+    {
+      "feed": "iex",
+      "max_drawdown": -0.004162013894882577,
+      "period": "matched",
+      "positions": 29,
+      "sharpe": 0.9862206744827292,
+      "slippage_bps_one_way": 8.0,
+      "total_return": 0.031255125346427715
+    },
+    {
+      "feed": "sip",
+      "max_drawdown": -0.010334095117934594,
+      "period": "2019-01-02_to_2026-07-17",
+      "positions": 60,
+      "sharpe": 0.9009041097174495,
+      "slippage_bps_one_way": 8.0,
+      "total_return": 0.06859158197665627
+    }
+  ],
+  "diagnostics": {
+    "session_bootstrap_95pct_return": [
+      0.01336754,
+      0.10564954
+    ],
+    "session_bootstrap_positive_frequency": 0.99525,
+    "top_3_position_share_of_net_pnl": 0.39601999758836637,
+    "top_3_symbol_share_of_net_pnl": 0.4757041181247388
+  }
+}

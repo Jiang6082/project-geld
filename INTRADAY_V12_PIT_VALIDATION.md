@@ -1,5 +1,8 @@
 # Intraday V12 point-in-time and independent-feed validation
 
+> Follow-up: `INTRADAY_V13_RESEARCH.md` adds causal risk controls to this
+> PIT/SIP control and is the current intraday research challenger.
+
 ## Bottom line
 
 V12's original fixed-July-2026 IEX result is not robust by itself. On identical

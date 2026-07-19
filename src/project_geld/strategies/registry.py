@@ -22,6 +22,7 @@ from project_geld.strategies.intra_v9 import IntraV9
 from project_geld.strategies.intra_v10 import IntraV10
 from project_geld.strategies.intra_v11 import IntraV11
 from project_geld.strategies.intra_v12 import IntraV12
+from project_geld.strategies.intra_v13 import IntraV13
 
 
 STRATEGIES = {
@@ -45,6 +46,7 @@ STRATEGIES = {
     "intra_v10": IntraV10,
     "intra_v11": IntraV11,
     "intra_v12": IntraV12,
+    "intra_v13": IntraV13,
     "intraday_momentum": IntraV1,
 }
 
