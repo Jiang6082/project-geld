@@ -58,7 +58,26 @@ def test_profile_credentials_are_isolated(monkeypatch):
     assert load_alpaca_credentials("intraday") == ("paper-key", "paper-secret")
 
 
+def _ensure_daily_v4_universe_snapshot():
+    """The Daily V4 paper config reads a generated universe snapshot under the
+    gitignored artifacts/ tree. On a clean checkout (e.g. CI) it is absent, so
+    materialize a minimal stub for config-parsing tests. A real snapshot is left
+    untouched."""
+    from pathlib import Path
+
+    path = Path("artifacts/paper-v4-shadow/universe.csv")
+    if not path.exists():
+        path.parent.mkdir(parents=True, exist_ok=True)
+        pd.DataFrame(
+            {
+                "timestamp": ["2026-07-15T04:00:00+00:00"] * 3,
+                "symbol": ["SPY", "AAPL", "MSFT"],
+            }
+        ).to_csv(path, index=False)
+
+
 def test_separate_account_configs_load():
+    _ensure_daily_v4_universe_snapshot()
     swing = load_config("configs/paper-daily-v4.toml")
     intraday = load_config("configs/paper-intra-v1.toml")
     validate_config(swing)
