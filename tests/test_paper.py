@@ -70,6 +70,27 @@ def test_implementation_shortfall_handles_no_orders():
     assert empty.empty
 
 
+def test_shortfall_kill_switch_triggers_only_when_base_sleeve_breaches():
+    from project_geld.paper import shortfall_kill_switch_active, trailing_shortfall_bps
+
+    history = pd.DataFrame(
+        [
+            {"symbol": "SPY", "shortfall_bps": 3.0, "missed": False},
+            {"symbol": "SPY", "shortfall_bps": 4.0, "missed": False},
+            {"symbol": "SPY", "shortfall_bps": 50.0, "missed": True},   # unfilled ignored
+            {"symbol": "AAPL", "shortfall_bps": -1.0, "missed": False},  # other symbol
+        ]
+    )
+    assert trailing_shortfall_bps(history, "SPY") == pytest.approx(3.5)
+    assert shortfall_kill_switch_active(history, "SPY", threshold_bps=2.0) is True
+    # Below the gate and empty history both stay inactive.
+    calm = pd.DataFrame(
+        [{"symbol": "SPY", "shortfall_bps": 1.0, "missed": False}]
+    )
+    assert shortfall_kill_switch_active(calm, "SPY", threshold_bps=2.0) is False
+    assert shortfall_kill_switch_active(pd.DataFrame(), "SPY") is False
+
+
 def targets():
     return pd.DataFrame(
         {

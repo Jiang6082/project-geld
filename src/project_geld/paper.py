@@ -163,6 +163,38 @@ def implementation_shortfall(
     return pd.DataFrame(rows, columns=columns)
 
 
+def trailing_shortfall_bps(
+    history: pd.DataFrame, symbol: str, lookback: int = 20
+) -> float:
+    """Mean implementation shortfall (bps) over recent filled orders for a symbol.
+
+    Returns NaN when there is no filled history yet, so the caller treats an
+    empty record as "not breached" rather than disabling a sleeve prematurely.
+    """
+    if history.empty or "shortfall_bps" not in history.columns:
+        return float("nan")
+    rows = history[history["symbol"].astype(str).str.upper() == symbol.upper()]
+    if "missed" in rows.columns:
+        rows = rows[~rows["missed"].astype(bool)]
+    rows = rows.dropna(subset=["shortfall_bps"]).tail(lookback)
+    return float(rows["shortfall_bps"].mean()) if len(rows) else float("nan")
+
+
+def shortfall_kill_switch_active(
+    history: pd.DataFrame,
+    symbol: str,
+    threshold_bps: float = 2.0,
+    lookback: int = 20,
+) -> bool:
+    """True when a symbol's trailing implementation shortfall breaches the gate.
+
+    The Intra V15 research invalidates the daily base sleeve above ~2 bps of
+    average shortfall per side; this turns that rule into an automatic guard.
+    """
+    average = trailing_shortfall_bps(history, symbol, lookback)
+    return bool(pd.notna(average) and average > threshold_bps)
+
+
 def paper_rebalance_due(
     bars: pd.DataFrame,
     paper: PaperConfig,
@@ -648,6 +680,7 @@ def run_paper_cycle(
     snapshot: AccountSnapshot | None = None,
     context_symbols: list[str] | None = None,
     confirmation_env: str = "PROJECT_GELD_CONFIRM_PAPER",
+    disable_symbols: set[str] | None = None,
 ) -> PaperCycleResult:
     if submit and not paper.enabled:
         raise RuntimeError("Set [paper] enabled = true before submitting paper orders.")
@@ -665,6 +698,13 @@ def run_paper_cycle(
     latest_targets = targets[
         targets["timestamp"].eq(latest_time) & targets["symbol"].isin(tradables)
     ].copy()
+    # Kill-switch / risk override: force these symbols flat this cycle.
+    if disable_symbols:
+        disabled = {symbol.upper() for symbol in disable_symbols}
+        latest_targets.loc[
+            latest_targets["symbol"].astype(str).str.upper().isin(disabled),
+            "target_weight",
+        ] = 0.0
     latest_prices = (
         bars.sort_values("timestamp")
         .groupby("symbol", as_index=False)

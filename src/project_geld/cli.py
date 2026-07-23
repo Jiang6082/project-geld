@@ -38,6 +38,7 @@ from project_geld.paper import (
     mark_paper_rebalance,
     paper_rebalance_due,
     run_paper_cycle,
+    shortfall_kill_switch_active,
 )
 from project_geld.strategies.registry import available_strategies, create_strategy
 from project_geld.shadow import AlpacaShadowMarket, run_shadow_cycle
@@ -522,6 +523,20 @@ def command_intraday_paper(args) -> None:
     snapshot = broker.snapshot(managed)
     performance = append_performance_snapshot(snapshot, output / "performance.csv")
     submit = args.submit and due
+    # Shortfall kill-switch: if the cost-sensitive base sleeve's trailing
+    # implementation shortfall has breached the research's ~2 bps gate, force its
+    # core symbol flat this cycle and trade only the overlay.
+    disable_symbols: set[str] = set()
+    core_symbol = getattr(strategy, "core_symbol", None)
+    shortfall_path = output / "implementation_shortfall.csv"
+    if core_symbol and shortfall_path.exists():
+        history = pd.read_csv(shortfall_path)
+        if shortfall_kill_switch_active(history, str(core_symbol)):
+            disable_symbols.add(str(core_symbol).upper())
+            print(
+                f"Kill-switch: {core_symbol} base sleeve trailing shortfall exceeds "
+                f"2 bps; forcing it flat this cycle."
+            )
     result = run_paper_cycle(
         bars,
         strategy,
@@ -533,6 +548,7 @@ def command_intraday_paper(args) -> None:
         snapshot=snapshot,
         context_symbols=context,
         confirmation_env=config.account.confirmation_env,
+        disable_symbols=disable_symbols,
     )
     result.targets.to_csv(output / "latest_targets.csv", index=False)
     result.orders.to_csv(output / "paper_orders.csv", index=False)

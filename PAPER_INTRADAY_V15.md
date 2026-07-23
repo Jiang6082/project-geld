@@ -34,11 +34,18 @@ The computer must be powered on, connected, and logged into Windows. V15 is a
 paper experiment whose daily sleeve is highly cost-sensitive; paper fills do
 not represent real queue position, spreads, impact, or borrow conditions.
 
-## Applied improvements (July 22, 2026) — Intra V15.0.4
+## Applied improvements (July 22, 2026) — Intra V15.0.5
 
 Patch trail: 15.0.1 minimum-trade floor fix, 15.0.2 implementation-shortfall
 tracking, 15.0.3 intraday universe-staleness guard, 15.0.4 continuous confidence
-sizing for the base sleeve.
+sizing for the base sleeve, 15.0.5 automatic shortfall kill-switch.
+
+15.0.5 detail: each submitting cycle checks the trailing implementation
+shortfall for the base sleeve's core symbol. If the mean over the recent filled
+orders exceeds 2 bps (the research's invalidation gate), the base sleeve is
+forced flat for that cycle and only the overlay trades. The check reads
+`implementation_shortfall.csv`, is fail-safe (a read error never blocks
+trading), and the selective V13 overlay is unaffected.
 
 15.0.4 detail: the base SPY sleeve now ramps continuously from the weak floor at
 5 bps to full weight at 15 bps rather than stepping straight to full. Exact IEX

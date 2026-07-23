@@ -6,7 +6,7 @@ from project_geld.strategies.registry import create_strategy
 
 def test_improved_strategies_carry_patched_versions():
     assert create_strategy("daily_v4", {}).version == "Daily V4.0.4"
-    assert create_strategy("intra_v15", {}).version == "Intra V15.0.4"
+    assert create_strategy("intra_v15", {}).version == "Intra V15.0.5"
     # The registry key / name stays stable so configs and state files are intact.
     assert create_strategy("daily_v4", {}).name == "daily_v4"
     assert create_strategy("intra_v15", {}).name == "intra_v15"

@@ -22,6 +22,8 @@ class IntraV15(IntraV13):
     - 15.0.3: universe-staleness guard added to the intraday paper path.
     - 15.0.4: continuous confidence sizing for the base sleeve (total return
       3.26% -> 3.45%, Sharpe 0.82 -> 0.88, lower turnover and drawdown).
+    - 15.0.5: automatic shortfall kill-switch — the paper path flattens the base
+      sleeve when its trailing implementation shortfall breaches ~2 bps.
     """
 
     core_symbol: str = "SPY"
@@ -38,7 +40,7 @@ class IntraV15(IntraV13):
     base_saturation_bps: float | None = None
     base_weight: float | None = None
     name: str = "intra_v15"
-    version: str = "Intra V15.0.4"
+    version: str = "Intra V15.0.5"
 
     def __post_init__(self) -> None:
         super().__post_init__()
