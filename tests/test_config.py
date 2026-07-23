@@ -12,6 +12,13 @@ def test_example_config_loads():
     assert isinstance(config.paper.enabled, bool)
 
 
+def test_intra_v15_enables_stale_order_recovery_and_market_exits():
+    config = load_config("configs/paper-intra-v15.toml")
+    validate_config(config)
+    assert config.paper.stale_order_seconds == 300
+    assert config.paper.market_exit_orders is True
+
+
 def test_invalid_gross_exposure_is_rejected():
     config = load_config("config.example.toml")
     with pytest.raises(ValueError, match="max_gross_exposure"):

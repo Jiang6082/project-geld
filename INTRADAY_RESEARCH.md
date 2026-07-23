@@ -74,3 +74,9 @@ reduced Sharpe and more than doubled turnover. In the 2017–2019 training perio
 its estimated annual alpha was slightly negative (-0.33%). It is therefore a
 deliberately higher-risk paper challenger, not a replacement proven superior to
 the 75/25 control.
+
+Superseded (July 22, 2026): a full-sample core/active spectrum showed total
+return plateaus from 25% to 75% active while turnover keeps rising, so 40/60's
+only edge was on this already-inspected window. The paper account was moved to
+75/25 with regime control, which posts the highest full-sample total return at
+the lowest turnover. See PAPER_DAILY_V4.md.

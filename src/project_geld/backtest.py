@@ -61,6 +61,13 @@ def _signed_quantity(value: float, fractional: bool) -> float:
     return direction * _quantity(abs(value), fractional)
 
 
+def _slippage(config: BacktestConfig, symbol: str) -> float:
+    basis_points = config.symbol_slippage_bps.get(
+        str(symbol).upper(), config.slippage_bps
+    )
+    return float(basis_points) / 10_000
+
+
 def run_backtest(
     bars: pd.DataFrame,
     strategy: Strategy,
@@ -94,6 +101,10 @@ def run_backtest(
     session_dates = pd.Series(
         dates.tz_convert(config.session_timezone).date, index=dates
     )
+    session_ordinals = {
+        session: ordinal
+        for ordinal, session in enumerate(pd.unique(session_dates.to_numpy()))
+    }
     session_ends = set(session_dates.groupby(session_dates).tail(1).index)
 
     target_table = targets.pivot(index="timestamp", columns="symbol", values="target_weight").reindex(dates)
@@ -106,7 +117,8 @@ def run_backtest(
     equity_rows: list[dict] = []
     trade_rows: list[dict] = []
 
-    for session_index, timestamp in enumerate(dates):
+    for timestamp in dates:
+        session_index = session_ordinals[session_dates.at[timestamp]]
         open_prices = opens.loc[timestamp].dropna()
         close_prices = closes.loc[timestamp].dropna()
         valuation_prices = {**last_prices, **{s: float(v) for s, v in open_prices.items()}}
@@ -136,7 +148,7 @@ def run_backtest(
                 if not np.isfinite(market_open) or market_open <= 0 or abs(delta) < 1e-9:
                     continue
                 side = "sell" if delta < 0 else "buy"
-                slip = config.slippage_bps / 10_000
+                slip = _slippage(config, symbol)
                 fill_price = market_open * (1 - slip if side == "sell" else 1 + slip)
                 quantity = _quantity(abs(delta), config.allow_fractional)
                 minimum_trade = max(
@@ -227,10 +239,9 @@ def run_backtest(
                     continue
                 quantity = abs(signed_quantity)
                 side = "sell" if signed_quantity > 0 else "buy"
+                slip = _slippage(config, symbol)
                 fill_price = market_close * (
-                    1 - config.slippage_bps / 10_000
-                    if side == "sell"
-                    else 1 + config.slippage_bps / 10_000
+                    1 - slip if side == "sell" else 1 + slip
                 )
                 fees = quantity * config.commission_per_share
                 cash += (

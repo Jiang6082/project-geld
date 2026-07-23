@@ -8,9 +8,26 @@ from project_geld.strategies.base import TARGET_COLUMNS
 from project_geld.strategies.equity_momentum_v3 import EquityMomentumV3
 
 
+# The active sleeve (EquityMomentumV3) always applies a forecast-volatility
+# ceiling. When DailyV4 leaves ``active_target_volatility`` unset the ceiling is
+# disabled by passing a value far above any realizable forecast, since the
+# wrapper already bounds the sleeve's gross exposure at ``active_weight``.
+_DISABLED_VOLATILITY_CEILING = 1_000.0
+
+
 @dataclass(frozen=True)
 class DailyV4:
-    """A stable index core plus a diversified residual-momentum stock sleeve."""
+    """A stable index core plus a diversified residual-momentum stock sleeve.
+
+    Version history (major = strategy generation, patch = applied improvement):
+    - 4.0.1: explicit, overridable ``regime_enabled`` / ``active_target_volatility``;
+      removed the duplicated update and the magic volatility ceiling
+      (behavior-preserving).
+    - 4.0.2: regime-aware exposure control enabled on the active sleeve.
+    - 4.0.3: allocation set to 75/25, the PnL-optimal, lowest-turnover point.
+    - 4.0.4: benchmark-aware active weighting (total return 304.3% -> 305.9% at
+      equal drawdown and turnover).
+    """
 
     core_symbol: str = "SPY"
     core_weight: float = 0.75
@@ -18,8 +35,11 @@ class DailyV4:
     active_name_cap: float = 0.02
     no_trade_band: float = 0.0025
     rebalance_every: int = 21
+    regime_enabled: bool = False
+    active_target_volatility: float | None = None
     active_parameters: dict = field(default_factory=dict)
     name: str = "daily_v4"
+    version: str = "Daily V4.0.4"
 
     def __post_init__(self) -> None:
         if not 0 <= self.core_weight <= 1:
@@ -34,29 +54,31 @@ class DailyV4:
             raise ValueError("no_trade_band cannot be negative.")
         if self.rebalance_every < 1:
             raise ValueError("rebalance_every must be positive.")
+        if (
+            self.active_target_volatility is not None
+            and self.active_target_volatility <= 0
+        ):
+            raise ValueError("active_target_volatility must be positive when set.")
 
     def _active_strategy(self) -> EquityMomentumV3:
+        ceiling = (
+            self.active_target_volatility
+            if self.active_target_volatility is not None
+            else _DISABLED_VOLATILITY_CEILING
+        )
         parameters = {
-            "benchmark_symbol": self.core_symbol.upper(),
             "max_symbols": 40,
             "exit_rank": 80,
+            **self.active_parameters,
+            # DailyV4 owns these knobs; they stay authoritative over any values
+            # supplied through active_parameters.
+            "benchmark_symbol": self.core_symbol.upper(),
             "max_position_weight": self.active_name_cap,
             "rebalance_every": self.rebalance_every,
-            "regime_enabled": False,
+            "regime_enabled": self.regime_enabled,
             "bullish_exposure": self.active_weight,
-            "target_portfolio_volatility": 10.0,
-            **self.active_parameters,
+            "target_portfolio_volatility": ceiling,
         }
-        parameters.update(
-            {
-                "benchmark_symbol": self.core_symbol.upper(),
-                "max_position_weight": self.active_name_cap,
-                "rebalance_every": self.rebalance_every,
-                "regime_enabled": False,
-                "bullish_exposure": self.active_weight,
-                "target_portfolio_volatility": 10.0,
-            }
-        )
         return EquityMomentumV3(**parameters)
 
     @property

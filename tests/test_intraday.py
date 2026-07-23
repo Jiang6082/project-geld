@@ -23,6 +23,8 @@ from project_geld.strategies.intra_v10 import IntraV10
 from project_geld.strategies.intra_v11 import FEATURE_COLUMNS, IntraV11
 from project_geld.strategies.intra_v12 import IntraV12
 from project_geld.strategies.intra_v13 import IntraV13
+from project_geld.strategies.intra_v14 import IntraV14
+from project_geld.strategies.intra_v15 import IntraV15
 
 
 def minute_bars() -> pd.DataFrame:
@@ -62,7 +64,12 @@ def test_separate_account_configs_load():
     validate_config(swing)
     validate_config(intraday)
     assert swing.account.credential_profile == "SWING"
-    assert swing.strategy.parameters["active_weight"] == 0.60
+    assert swing.strategy.parameters["active_weight"] == 0.25
+    assert swing.strategy.parameters["core_weight"] == 0.75
+    assert swing.strategy.parameters["regime_enabled"] is True
+    assert swing.data.feed == "sip"
+    assert swing.paper.enabled
+    assert swing.paper.market_data_delay_minutes == 20
     assert intraday.account.credential_profile == "INTRADAY"
     assert intraday.risk.max_gross_exposure == 0.70
     daily_v5 = load_config("configs/research-daily-v5.toml")
@@ -79,6 +86,20 @@ def test_separate_account_configs_load():
     assert intra_v3.strategy.parameters["top_n"] == 8
     assert intra_v3.risk.max_gross_exposure == 0.80
     assert not intra_v3.paper.enabled
+
+    intra_v15 = load_config("configs/paper-intra-v15.toml")
+    validate_config(intra_v15)
+    assert intra_v15.account.credential_profile == "INTRADAY"
+    assert intra_v15.strategy.name == "intra_v15"
+    assert intra_v15.strategy.parameters["base_signal_time"] == "10:30"
+    assert intra_v15.strategy.parameters["base_long_weight"] == 0.05
+    assert intra_v15.strategy.parameters["base_short_weight"] == 0.025
+    assert intra_v15.strategy.parameters["base_weak_weight"] == 0.005
+    # The minimum-trade floor must sit below the weak-signal leg so it executes.
+    assert intra_v15.risk.min_trade_pct_equity < 0.005
+    assert intra_v15.risk.max_gross_exposure == 0.45
+    assert intra_v15.backtest.symbol_slippage_bps["SPY"] == 2.0
+    assert intra_v15.paper.enabled
     intra_v4 = load_config("configs/research-intra-v4.toml")
     validate_config(intra_v4)
     assert intra_v4.strategy.name == "intra_v4"
@@ -492,6 +513,169 @@ def test_intra_v13_skips_a_highly_correlated_second_candidate():
         returns.index[-1],
     )
     assert selected == ["AAA", "CCC"]
+
+
+def test_intra_v14_selects_a_daily_market_neutral_book_and_flattens():
+    clocks = ["09:45", "10:00", "10:15", "10:30", "15:45"]
+    changes = {
+        "AAA": 0.020,
+        "BBB": 0.010,
+        "CCC": -0.010,
+        "DDD": -0.020,
+        "SPY": 0.000,
+    }
+    rows = []
+    for index, clock in enumerate(clocks):
+        timestamp = pd.Timestamp(
+            f"2026-07-13 {clock}", tz="America/New_York"
+        ).tz_convert("UTC")
+        for symbol, change in changes.items():
+            close = 100.0 * (1.0 + change * index)
+            rows.append(
+                {
+                    "timestamp": timestamp,
+                    "symbol": symbol,
+                    "open": close,
+                    "high": close,
+                    "low": close,
+                    "close": close,
+                    "volume": 1_000_000,
+                }
+            )
+    strategy = IntraV14(
+        lookback_bars=3,
+        names_per_side=2,
+        gross_exposure=0.4,
+        max_position_weight=0.1,
+        min_cumulative_dollar_volume=0,
+    )
+    targets = strategy.generate_targets(pd.DataFrame(rows))
+    signal = targets[
+        targets["timestamp"].eq(
+            pd.Timestamp("2026-07-13 10:30", tz="America/New_York").tz_convert(
+                "UTC"
+            )
+        )
+    ].set_index("symbol")["target_weight"]
+    assert signal.to_dict() == {
+        "AAA": 0.1,
+        "BBB": 0.1,
+        "CCC": -0.1,
+        "DDD": -0.1,
+    }
+    flattened = targets[
+        targets["timestamp"].eq(
+            pd.Timestamp("2026-07-13 15:45", tz="America/New_York").tz_convert(
+                "UTC"
+            )
+        )
+    ]
+    assert flattened["target_weight"].eq(0).all()
+
+
+def test_intra_v14_validates_direction():
+    strategy = IntraV14(direction="reversal")
+    assert strategy.direction == "reversal"
+    with pytest.raises(ValueError, match="direction"):
+        IntraV14(direction="random")
+
+
+def test_intra_v15_adds_a_daily_spy_sleeve_and_flattens():
+    clocks = ["09:45", "10:00", "10:15", "10:30", "15:30", "15:45"]
+    rows = []
+    for index, clock in enumerate(clocks):
+        timestamp = pd.Timestamp(
+            f"2026-07-13 {clock}", tz="America/New_York"
+        ).tz_convert("UTC")
+        for symbol in ["SPY", "AAPL"]:
+            close = 100.0 + (index if symbol == "SPY" else 0.0)
+            rows.append(
+                {
+                    "timestamp": timestamp,
+                    "symbol": symbol,
+                    "open": 100.0,
+                    "high": close,
+                    "low": 100.0,
+                    "close": close,
+                    "volume": 1_000_000,
+                }
+            )
+    strategy = IntraV15(
+        min_bar_dollar_volume=0,
+        min_relative_dislocation=1.0,
+        daily_trend_sessions=0,
+        relative_volume_sessions=0,
+        daily_volatility_sessions=0,
+        min_market_breadth=0,
+        correlation_lookback_sessions=0,
+    )
+    targets = strategy.generate_targets(pd.DataFrame(rows))
+    spy = targets[targets["symbol"].eq("SPY")].set_index("timestamp")
+    assert spy.at[
+        pd.Timestamp("2026-07-13 10:30", tz="America/New_York").tz_convert("UTC"),
+        "target_weight",
+    ] == pytest.approx(0.05)
+    assert spy.at[
+        pd.Timestamp("2026-07-13 15:30", tz="America/New_York").tz_convert("UTC"),
+        "target_weight",
+    ] == 0.0
+
+
+def test_intra_v15_requires_benchmark_core_and_valid_base_weight():
+    with pytest.raises(ValueError, match="core_symbol"):
+        IntraV15(core_symbol="QQQ")
+    with pytest.raises(ValueError, match="base_weight"):
+        IntraV15(base_weight=0)
+    with pytest.raises(ValueError, match="base_min_signal_bps"):
+        IntraV15(base_min_signal_bps=-1)
+    with pytest.raises(ValueError, match="base_signal_time"):
+        IntraV15(base_signal_time="15:30")
+
+
+@pytest.mark.parametrize(
+    ("signal_close", "expected_weight"),
+    [(99.97, -0.005), (99.90, -0.025)],
+)
+def test_intra_v15_scales_weak_and_strong_short_signals(
+    signal_close, expected_weight
+):
+    rows = []
+    for clock in ["09:45", "10:00", "10:15", "10:30", "15:30", "15:45"]:
+        timestamp = pd.Timestamp(
+            f"2026-07-13 {clock}", tz="America/New_York"
+        ).tz_convert("UTC")
+        for symbol in ["SPY", "AAPL"]:
+            close = signal_close if symbol == "SPY" and clock == "10:30" else 100.0
+            rows.append(
+                {
+                    "timestamp": timestamp,
+                    "symbol": symbol,
+                    "open": 100.0,
+                    "high": max(100.0, close),
+                    "low": min(100.0, close),
+                    "close": close,
+                    "volume": 1_000_000,
+                }
+            )
+    strategy = IntraV15(
+        min_bar_dollar_volume=0,
+        min_relative_dislocation=1.0,
+        daily_trend_sessions=0,
+        relative_volume_sessions=0,
+        daily_volatility_sessions=0,
+        min_market_breadth=0,
+        correlation_lookback_sessions=0,
+    )
+    targets = strategy.generate_targets(pd.DataFrame(rows))
+    row = targets[
+        targets["symbol"].eq("SPY")
+        & targets["timestamp"].eq(
+            pd.Timestamp("2026-07-13 10:30", tz="America/New_York").tz_convert(
+                "UTC"
+            )
+        )
+    ].iloc[0]
+    assert row["target_weight"] == pytest.approx(expected_weight)
 
 
 class AlwaysIntradayLong:

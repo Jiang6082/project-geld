@@ -10,10 +10,10 @@ Assuming the two paper accounts receive equal starting capital:
 
 | Aggregate capital | Role |
 |---:|---|
-| 20% | SPY core: 40% of the swing account |
-| 30% | Daily V4 active sleeve: 60% of the daily account |
-| Up to 35% | Intra V1: 70% maximum exposure in the intraday account |
-| At least 15% | Intraday-account cash reserve |
+| 37.5% | SPY core: 75% of the swing account |
+| 12.5% | Daily V4 active sleeve: 25% of the daily account |
+| Up to 22.5% | Intra V15: 45% maximum gross exposure in the intraday account |
+| At least 27.5% | Combined unallocated cash while Intra V15 is active |
 
 The intraday sleeve normally returns to cash before the close. These are paper
 research allocations, not evidence that either alpha allocation is optimal.
@@ -42,40 +42,61 @@ Dry plan:
 geld --config configs/paper-daily-v4.toml paper-once --output artifacts/paper-daily-v4
 ```
 
-The config uses 40% SPY and 60% Daily V4 active momentum, with the existing 21-session
-rebalance cadence. Before submission, set `[paper] enabled = true` in the config
-and `PROJECT_GELD_SWING_CONFIRM_PAPER=YES` in `.env`.
-
-## Intra V1 account
-
-Backtest completed 15-minute bars:
+The config uses 75% SPY and 25% Daily V4 active momentum, with the existing 21-session
+rebalance cadence. It uses delayed SIP and discards the current session's daily
+bar so its feed matches the SIP research without contaminating the signal with
+Monday's partial bar. The locked config and confirmation variable are enabled.
+On a paper-trading day, start before 09:31 ET:
 
 ```powershell
-geld --config configs/paper-intra-v1.toml intraday-backtest --source alpaca --start 2026-04-01 --end 2026-07-15 --output artifacts/intra-v1-backtest
+.\scripts\run-daily-v4-paper.ps1
+```
+
+Use `-DryRun` to plan without submitting.
+
+## Intra V15 account
+
+One-cycle dry plan:
+
+```powershell
+geld --config configs/paper-intra-v15.toml intraday-paper-once --output artifacts/paper-intra-v15
 ```
 
 Dry-plan the latest completed bar:
 
 ```powershell
-geld --config configs/paper-intra-v1.toml intraday-paper-once --output artifacts/paper-intra-v1
+.\scripts\run-intra-v15-paper.ps1 -DryRun
 ```
 
-The configured intraday research candidate ranks liquid short-horizon laggards
-relative to SPY, admits positions only while SPY is above its session VWAP, and observes
-the market every 15 minutes. It reselects no more than hourly, retains existing
-names through a rank buffer, ignores trades smaller than 0.5% of account equity,
-uses at most 70% gross exposure, and targets zero
-exposure after 15:45 New York time. The engine also forces backtest positions
-flat on the final bar of every session.
+The configured intraday candidate combines a confidence-scaled SPY opening-trend
+sleeve that acts at 10:30 with the point-in-time-universe V13 short-continuation overlay.
+The overlay enters only after its 10:30 signal and 10:45 confirmation filters,
+uses at most four 10% positions, and brings maximum gross exposure to 45%.
+Every sleeve targets zero at 15:45 New York time.
 
 The paper planner uses day limit orders no more than two basis points through
 the latest completed-bar reference price. An unfilled order is preferable to
 paying a cost that the research indicates would erase the candidate signal.
 
-Run the command once after each completed 15-minute bar. A persistent bar guard
-prevents a submitted bar from being processed twice. Before paper submission,
-set `[paper] enabled = true` in the config and
-`PROJECT_GELD_INTRADAY_CONFIRM_PAPER=YES` in `.env`.
+The runner invokes each completed 15-minute cycle and a persistent bar guard
+prevents a submitted bar from being processed twice. Its locked config and
+confirmation variable are enabled. See `PAPER_INTRADAY_V15.md`.
+
+## Windows scheduling
+
+Install the two weekday 09:25 ET execution tasks and the 16:25 ET read-only
+Daily V4 close task with:
+
+```powershell
+.\scripts\install-paper-tasks.ps1
+```
+
+The registered tasks are `ProjectGeld-DailyV4-Paper` and
+`ProjectGeld-IntraV15-Paper`. They use the repository as their working directory,
+ignore duplicate task instances, start when available, may wake the computer,
+and retry a failed runner three times. Each runner also owns a named process
+lock, writes a heartbeat JSON file, and appends a dated log under its artifact
+directory. The computer must be powered on and the Windows user logged in.
 
 ## Promotion rule
 

@@ -118,6 +118,8 @@ Reproduce the study with:
 .venv\Scripts\python.exe -u scripts\intraday_v13_research.py --stage all
 ```
 
-V13 should advance to a locked future/paper observation only after a safe short
-paper executor and current SIP entitlement check are implemented. It should not
-be retuned again on the 2019-2026 sample.
+The paper executor now supports opt-in signed targets with account shorting,
+equity, shortability, and easy-to-borrow gates. Current paper credentials do
+not include recent SIP entitlement, so `configs/paper-intra-v13.toml` uses IEX;
+the SIP configuration remains research-only. V13 is ready for locked paper
+observation and should not be retuned again on the 2019-2026 sample.

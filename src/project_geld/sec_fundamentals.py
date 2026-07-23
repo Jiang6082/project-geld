@@ -4,6 +4,7 @@ from dataclasses import dataclass
 import json
 from pathlib import Path
 import time
+from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
 import numpy as np
@@ -187,10 +188,17 @@ class SecFundamentalSource:
             cik = mapping.get(symbol.upper())
             if cik is None:
                 continue
-            facts = self._json(
-                f"https://data.sec.gov/api/xbrl/companyfacts/CIK{cik}.json",
-                self.cache_dir / f"CIK{cik}.json",
-            )
+            try:
+                facts = self._json(
+                    f"https://data.sec.gov/api/xbrl/companyfacts/CIK{cik}.json",
+                    self.cache_dir / f"CIK{cik}.json",
+                )
+            except HTTPError as error:
+                # Not every ticker has SEC Company Facts (ETFs, ADRs, and some
+                # delisted names return 404); skip rather than abort the batch.
+                if error.code in {403, 404}:
+                    continue
+                raise
             features = extract_company_features(symbol, facts)
             if len(features):
                 frames.append(features)

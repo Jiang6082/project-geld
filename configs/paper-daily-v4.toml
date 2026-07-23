@@ -9,20 +9,31 @@ symbols_file = "../artifacts/paper-v4-shadow/universe.csv"
 benchmark = "SPY"
 
 [data]
-feed = "iex"
+feed = "sip"
 adjustment = "all"
-cache_dir = "data/cache/swing"
+cache_dir = "data/cache/swing-daily-v4-sip"
 
 [strategy]
 name = "daily_v4"
 
+# Allocation note: 75% SPY core / 25% active sleeve, selected on PnL evidence.
+# A full core/active spectrum reproduction (2017-2026) shows total return
+# plateaus at ~300-304% for every active weight from 25% to 75%, while turnover
+# climbs from ~1.7x (75/25) to ~4.2x (40/60) to ~5.2x (25/75). 75/25 therefore
+# captures the maximum backtested PnL at the lowest turnover, which matters most
+# given this strategy's documented cost sensitivity. This also matches the
+# pre-registered MOMENTUM_V4 selection. See PAPER_DAILY_V4.md.
 [strategy.parameters]
 core_symbol = "SPY"
-core_weight = 0.40
-active_weight = 0.60
+core_weight = 0.75
+active_weight = 0.25
 active_name_cap = 0.03
 no_trade_band = 0.0025
 rebalance_every = 21
+# Regime-aware exposure control on the active sleeve. At 75/25 it slightly raises
+# total return (302% -> 304%) and Sharpe while trimming bear-regime exposure, and
+# stays positive in every sub-period.
+regime_enabled = true
 
 [strategy.parameters.active_parameters]
 formation_lookback = 252
@@ -38,6 +49,10 @@ exit_rank = 80
 maximum_annualized_volatility = 0.60
 max_pairwise_correlation = 0.85
 residual_factor_symbols = []
+# Benchmark-aware weighting tilts toward stronger scores and penalizes beta far
+# from 1. Full-sample reproduction: total return 304.3% -> 305.9% at identical
+# drawdown and turnover, positive in every sub-period.
+weighting_method = "benchmark_aware"
 
 [backtest]
 initial_cash = 100000.0
@@ -57,16 +72,19 @@ min_trade_notional = 10.0
 max_daily_loss_pct = 0.02
 
 [risk.symbol_position_weight_limits]
-SPY = 0.40
+SPY = 0.75
 
 [risk.symbol_order_notional_limits]
 SPY = 1000000000.0
 
 [risk.symbol_order_pct_equity_limits]
-SPY = 0.40
+SPY = 0.75
 
 [paper]
-enabled = false
+enabled = true
+allow_short = false
+require_easy_to_borrow = true
+market_data_delay_minutes = 20
 lookback_days = 800
 client_order_prefix = "geldswg"
 rebalance_every_sessions = 21

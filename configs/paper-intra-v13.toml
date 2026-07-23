@@ -1,5 +1,5 @@
 [account]
-name = "intra-v13-pit-sip-research"
+name = "intra-v13-paper"
 credential_profile = "INTRADAY"
 confirmation_env = "PROJECT_GELD_INTRADAY_CONFIRM_PAPER"
 
@@ -9,9 +9,9 @@ symbols_file = "../universes/pit-liquid-100-monthly-2019-2026.csv.gz"
 benchmark = "SPY"
 
 [data]
-feed = "sip"
+feed = "iex"
 adjustment = "all"
-cache_dir = "data/cache/intraday-v13-pit-sip"
+cache_dir = "data/cache/intraday-v13-paper-iex"
 
 [strategy]
 name = "intra_v13"
@@ -44,7 +44,7 @@ timezone = "America/New_York"
 [intraday]
 bar_minutes = 15
 lookback_days = 90
-state_file = "artifacts/research-intra-v13-pit-sip/cycle_state.json"
+state_file = "artifacts/paper-intra-v13/cycle_state.json"
 
 [backtest]
 initial_cash = 100000.0
@@ -68,13 +68,13 @@ min_trade_pct_equity = 0.005
 max_daily_loss_pct = 0.005
 
 [paper]
-enabled = false
-allow_short = false
+enabled = true
+allow_short = true
 require_easy_to_borrow = true
 lookback_days = 90
 client_order_prefix = "geldiv13"
 rebalance_every_sessions = 1
-state_file = "artifacts/research-intra-v13-pit-sip/unused-daily-state.json"
+state_file = "artifacts/paper-intra-v13/unused-daily-state.json"
 cash_buffer_pct = 0.01
 max_universe_age_days = 45
 execution_style = "marketable_limit"

@@ -5,6 +5,7 @@ import json
 import math
 import os
 from pathlib import Path
+import time
 from typing import Protocol
 
 import pandas as pd
@@ -21,12 +22,24 @@ class AccountSnapshot:
     positions: dict[str, float]
     open_order_symbols: set[str]
     cash: float = 0.0
+    buying_power: float = 0.0
+    shorting_enabled: bool = False
     unmanaged_notional: float = 0.0
+
+
+@dataclass(frozen=True)
+class ShortAvailability:
+    shortable: bool
+    easy_to_borrow: bool
+    borrow_status: str
 
 
 class PaperBrokerProtocol(Protocol):
     def get_clock(self): ...
     def snapshot(self, universe: list[str]) -> AccountSnapshot: ...
+    def short_availability(
+        self, symbols: list[str]
+    ) -> dict[str, ShortAvailability]: ...
     def submit(self, intent: OrderIntent): ...
 
 
@@ -72,6 +85,84 @@ def append_performance_snapshot(
     return pd.Series(row)
 
 
+def implementation_shortfall(
+    planned_orders: pd.DataFrame,
+    order_activity: pd.DataFrame,
+) -> pd.DataFrame:
+    """Per-order implementation shortfall versus the decision reference price.
+
+    Joins planned intents (``reference_price`` set at the decision bar) to the
+    realized Alpaca order activity by ``client_order_id``. ``shortfall_bps`` is
+    the signed execution cost relative to the reference, positive when the fill
+    is worse than the decision price for that side. Unfilled orders are flagged
+    so the cost-sensitive daily sleeve can be monitored against the research's
+    two-basis-point invalidation threshold.
+    """
+    columns = [
+        "client_order_id",
+        "symbol",
+        "side",
+        "reference_price",
+        "limit_price",
+        "filled_average_price",
+        "planned_quantity",
+        "filled_quantity",
+        "fill_rate",
+        "shortfall_bps",
+        "missed",
+    ]
+    if planned_orders.empty:
+        return pd.DataFrame(columns=columns)
+    planned = planned_orders.copy()
+    planned["client_order_id"] = planned["client_order_id"].astype(str)
+    fills = (
+        order_activity.copy()
+        if len(order_activity)
+        else pd.DataFrame(
+            columns=["client_order_id", "filled_quantity", "filled_average_price"]
+        )
+    )
+    if len(fills):
+        fills["client_order_id"] = fills["client_order_id"].astype(str)
+        fills = fills.drop_duplicates("client_order_id", keep="last")
+    merged = planned.merge(
+        fills[["client_order_id", "filled_quantity", "filled_average_price"]],
+        on="client_order_id",
+        how="left",
+    )
+    rows: list[dict] = []
+    for _, order in merged.iterrows():
+        reference = float(order.get("reference_price", 0.0) or 0.0)
+        planned_quantity = float(order.get("quantity", 0.0) or 0.0)
+        filled_quantity = float(order.get("filled_quantity", 0.0) or 0.0)
+        fill_price = order.get("filled_average_price")
+        fill_price = float(fill_price) if pd.notna(fill_price) else float("nan")
+        side = str(order.get("side", ""))
+        if reference > 0 and filled_quantity > 0 and fill_price == fill_price:
+            direction = 1.0 if side == "buy" else -1.0
+            shortfall_bps = direction * (fill_price - reference) / reference * 10_000.0
+        else:
+            shortfall_bps = float("nan")
+        rows.append(
+            {
+                "client_order_id": str(order.get("client_order_id", "")),
+                "symbol": str(order.get("symbol", "")),
+                "side": side,
+                "reference_price": reference,
+                "limit_price": order.get("limit_price"),
+                "filled_average_price": fill_price,
+                "planned_quantity": planned_quantity,
+                "filled_quantity": filled_quantity,
+                "fill_rate": (
+                    filled_quantity / planned_quantity if planned_quantity > 0 else 0.0
+                ),
+                "shortfall_bps": shortfall_bps,
+                "missed": filled_quantity <= 0.0,
+            }
+        )
+    return pd.DataFrame(rows, columns=columns)
+
+
 def paper_rebalance_due(
     bars: pd.DataFrame,
     paper: PaperConfig,
@@ -110,14 +201,17 @@ def _floor_quantity(quantity: float) -> float:
 
 
 def _safe_targets(
-    latest: pd.DataFrame, risk: RiskConfig, available_gross: float
+    latest: pd.DataFrame,
+    risk: RiskConfig,
+    available_gross: float,
+    allow_short: bool = False,
 ) -> pd.Series:
     raw_weights = latest.set_index("symbol")["target_weight"]
-    if raw_weights.lt(0).any():
+    if raw_weights.lt(0).any() and not allow_short:
         raise RuntimeError(
-            "Paper planning does not support short targets; no orders planned."
+            "Paper short targets require [paper] allow_short = true; no orders planned."
         )
-    weights = raw_weights.clip(lower=0.0)
+    weights = raw_weights.copy() if allow_short else raw_weights.clip(lower=0.0)
     caps = pd.Series(
         {
             symbol: risk.symbol_position_weight_limits.get(
@@ -126,8 +220,8 @@ def _safe_targets(
             for symbol in weights.index
         }
     )
-    weights = weights.where(weights.le(caps), caps)
-    gross = float(weights.sum())
+    weights = weights.clip(lower=-caps, upper=caps)
+    gross = float(weights.abs().sum())
     gross_limit = max(min(available_gross, risk.max_gross_exposure), 0.0)
     if gross > gross_limit and gross > 0:
         weights *= gross_limit / gross
@@ -145,23 +239,32 @@ def build_rebalance_orders(
     cash_buffer_pct: float = 0.0,
     execution_style: str = "market",
     limit_offset_bps: float = 0.0,
+    market_exit_orders: bool = False,
+    allow_short: bool = False,
+    require_easy_to_borrow: bool = True,
+    short_availability: dict[str, ShortAvailability] | None = None,
 ) -> list[OrderIntent]:
     if snapshot.equity <= 0:
         raise ValueError("Paper account equity must be positive.")
+    daily_loss_guard = False
     if snapshot.last_equity > 0:
         daily_return = snapshot.equity / snapshot.last_equity - 1
         if daily_return <= -risk.max_daily_loss_pct:
-            raise RuntimeError(
-                f"Daily-loss guard triggered at {daily_return:.2%}; no orders planned."
-            )
-    if any(quantity < 0 for quantity in snapshot.positions.values()):
-        raise RuntimeError("A managed symbol has a short position; paper planning stopped.")
+            daily_loss_guard = True
     unmanaged_weight = snapshot.unmanaged_notional / snapshot.equity
     targets = _safe_targets(
         latest_targets,
         risk,
         risk.max_gross_exposure - unmanaged_weight - cash_buffer_pct,
+        allow_short,
     )
+    if daily_loss_guard:
+        targets[:] = 0.0
+
+    availability = {
+        symbol.upper(): status
+        for symbol, status in (short_availability or {}).items()
+    }
     orders: list[OrderIntent] = []
     all_symbols = sorted(set(targets.index) | set(snapshot.positions))
     for symbol in all_symbols:
@@ -170,22 +273,61 @@ def build_rebalance_orders(
         price = float(prices.get(symbol, 0.0))
         if price <= 0:
             continue
-        current_quantity = max(float(snapshot.positions.get(symbol, 0.0)), 0.0)
+        current_quantity = float(snapshot.positions.get(symbol, 0.0))
         target_weight = float(targets.get(symbol, 0.0))
         desired_quantity = target_weight * snapshot.equity / price
+        if desired_quantity < 0:
+            desired_quantity = -float(math.floor(abs(desired_quantity)))
+
+        reason = "daily_loss_exit" if daily_loss_guard else "rebalance"
+        if current_quantity * desired_quantity < 0:
+            desired_quantity = 0.0
+            reason = "flatten_before_reverse"
+
+        increasing_short = desired_quantity < min(current_quantity, 0.0)
+        if increasing_short:
+            status = availability.get(symbol.upper())
+            can_short = (
+                snapshot.shorting_enabled
+                and snapshot.equity >= 2_000
+                and bool(status and status.shortable)
+            )
+            if require_easy_to_borrow:
+                can_short = can_short and bool(status and status.easy_to_borrow)
+            if not can_short:
+                desired_quantity = current_quantity
+
         delta = desired_quantity - current_quantity
+        if abs(delta) < 1e-12:
+            continue
+        reducing_risk = (
+            abs(desired_quantity) < abs(current_quantity)
+            and current_quantity * desired_quantity >= 0
+        )
         minimum_trade = max(
             risk.min_trade_notional,
             risk.min_trade_pct_equity * snapshot.equity,
         )
-        if abs(delta * price) < minimum_trade:
+        mandatory_exit = reducing_risk and abs(desired_quantity) < 1e-12
+        if abs(delta * price) < minimum_trade and not mandatory_exit:
             continue
         side = "buy" if delta > 0 else "sell"
         quantity = abs(delta)
-        if side == "sell":
-            quantity = min(quantity, current_quantity)
+        if current_quantity < 0 or desired_quantity < 0:
+            quantity = float(math.floor(quantity))
+        if reason == "rebalance":
+            if current_quantity < 0 and delta > 0:
+                reason = "cover_short"
+            elif desired_quantity < current_quantity and desired_quantity < 0:
+                reason = "open_short"
+            elif current_quantity > 0 and delta < 0:
+                reason = "close_long"
+            elif delta > 0:
+                reason = "open_long"
         limit_price = None
-        if execution_style == "marketable_limit":
+        if execution_style == "marketable_limit" and not (
+            market_exit_orders and mandatory_exit
+        ):
             offset = limit_offset_bps / 10_000
             raw_limit = price * (1 + offset if side == "buy" else 1 - offset)
             limit_price = round(raw_limit, 2 if raw_limit >= 1 else 4)
@@ -198,13 +340,18 @@ def build_rebalance_orders(
         )
         if pct_limit is not None:
             notional_limit = min(notional_limit, pct_limit * snapshot.equity)
-        quantity = min(quantity, notional_limit / order_price)
-        quantity = _floor_quantity(quantity)
+        if not reducing_risk:
+            quantity = min(quantity, notional_limit / order_price)
+        quantity = (
+            float(math.floor(quantity))
+            if current_quantity < 0 or desired_quantity < 0
+            else _floor_quantity(quantity)
+        )
         if quantity <= 0:
             continue
-        date_code = pd.Timestamp(as_of).strftime("%Y%m%d")
+        decision_code = pd.Timestamp(as_of).strftime("%Y%m%d%H%M")
         client_order_id = (
-            f"{prefix[:8]}-{date_code}-{strategy_name[:8]}-{symbol[:8]}-{side[0]}"
+            f"{prefix[:8]}-{decision_code}-{strategy_name[:8]}-{symbol[:8]}-{side[0]}"
         )[:48]
         orders.append(
             OrderIntent(
@@ -215,17 +362,32 @@ def build_rebalance_orders(
                 notional=quantity * order_price,
                 target_weight=target_weight,
                 client_order_id=client_order_id,
+                reason=reason,
                 limit_price=limit_price,
             )
         )
-    sell_notional = sum(order.notional for order in orders if order.side == "sell")
+    closing_sale_notional = sum(
+        order.notional
+        for order in orders
+        if order.side == "sell" and order.reason != "open_short"
+    )
+    base_buying_power = (
+        snapshot.buying_power
+        if allow_short and snapshot.buying_power > 0
+        else snapshot.cash
+    )
     remaining_buying_budget = (
-        max(snapshot.cash, 0.0) * (1 - cash_buffer_pct) + sell_notional
+        max(base_buying_power, 0.0) * (1 - cash_buffer_pct)
+        + closing_sale_notional
     )
     cash_safe_orders: list[OrderIntent] = []
     for order in orders:
         if order.side == "sell":
             cash_safe_orders.append(order)
+            continue
+        if order.reason in {"cover_short", "daily_loss_exit", "flatten_before_reverse"}:
+            cash_safe_orders.append(order)
+            remaining_buying_budget = max(remaining_buying_budget - order.notional, 0.0)
             continue
         affordable_notional = min(order.notional, remaining_buying_budget)
         affordable_quantity = _floor_quantity(
@@ -294,8 +456,159 @@ class AlpacaPaperBroker:
             positions=positions,
             open_order_symbols={order.symbol for order in open_orders},
             cash=float(account.cash),
+            buying_power=float(account.buying_power),
+            shorting_enabled=bool(account.shorting_enabled),
             unmanaged_notional=unmanaged_notional,
         )
+
+    def short_availability(
+        self, symbols: list[str]
+    ) -> dict[str, ShortAvailability]:
+        results: dict[str, ShortAvailability] = {}
+        for symbol in sorted({item.upper() for item in symbols}):
+            asset = self.client.get_asset(symbol)
+            raw_status = getattr(asset, "borrow_status", None)
+            borrow_status = str(getattr(raw_status, "value", raw_status) or "unknown")
+            normalized = borrow_status.lower().replace("-", "_").replace(" ", "_")
+            legacy_easy = bool(getattr(asset, "easy_to_borrow", False))
+            easy_to_borrow = legacy_easy or normalized in {
+                "easy",
+                "easy_to_borrow",
+                "etb",
+            }
+            results[symbol] = ShortAvailability(
+                shortable=bool(getattr(asset, "shortable", False)),
+                easy_to_borrow=easy_to_borrow,
+                borrow_status=borrow_status,
+            )
+        return results
+
+    def order_activity(self, after: pd.Timestamp) -> pd.DataFrame:
+        from alpaca.trading.enums import QueryOrderStatus
+        from alpaca.trading.requests import GetOrdersRequest
+
+        observed = pd.Timestamp(after)
+        if observed.tzinfo is None:
+            observed = observed.tz_localize("UTC")
+        orders = self.client.get_orders(
+            filter=GetOrdersRequest(
+                status=QueryOrderStatus.ALL,
+                after=observed.to_pydatetime(),
+                limit=500,
+            )
+        )
+
+        def value(item):
+            return getattr(item, "value", item)
+
+        rows = []
+        for order in orders:
+            rows.append(
+                {
+                    "submitted_at": getattr(order, "submitted_at", None),
+                    "filled_at": getattr(order, "filled_at", None),
+                    "symbol": str(order.symbol),
+                    "side": str(value(order.side)),
+                    "quantity": float(order.qty or 0),
+                    "filled_quantity": float(order.filled_qty or 0),
+                    "status": str(value(order.status)),
+                    "filled_average_price": (
+                        float(order.filled_avg_price)
+                        if order.filled_avg_price is not None
+                        else None
+                    ),
+                    "limit_price": (
+                        float(order.limit_price)
+                        if order.limit_price is not None
+                        else None
+                    ),
+                    "client_order_id": str(order.client_order_id),
+                    "order_id": str(order.id),
+                }
+            )
+        return pd.DataFrame(rows)
+
+    def cancel_stale_orders(
+        self,
+        symbols: list[str],
+        max_age_seconds: int,
+        observed_at: pd.Timestamp | None = None,
+        wait_timeout_seconds: float = 3.0,
+    ) -> pd.DataFrame:
+        """Cancel managed open orders old enough to block a fresh decision cycle."""
+        from alpaca.trading.enums import QueryOrderStatus
+        from alpaca.trading.requests import GetOrdersRequest
+
+        if max_age_seconds <= 0:
+            return pd.DataFrame()
+        now = (
+            pd.Timestamp.now(tz="UTC")
+            if observed_at is None
+            else pd.Timestamp(observed_at)
+        )
+        if now.tzinfo is None:
+            now = now.tz_localize("UTC")
+        wanted = {symbol.upper() for symbol in symbols}
+        open_orders = self.client.get_orders(
+            filter=GetOrdersRequest(status=QueryOrderStatus.OPEN)
+        )
+        rows: list[dict] = []
+        cancelled_ids: set[str] = set()
+        for order in open_orders:
+            submitted_value = getattr(order, "submitted_at", None)
+            if submitted_value is None:
+                continue
+            submitted_at = pd.Timestamp(submitted_value)
+            if submitted_at.tzinfo is None:
+                submitted_at = submitted_at.tz_localize("UTC")
+            age_seconds = max((now - submitted_at).total_seconds(), 0.0)
+            if str(order.symbol).upper() not in wanted or age_seconds < max_age_seconds:
+                continue
+            try:
+                self.client.cancel_order_by_id(order.id)
+            except Exception as error:
+                current = self.client.get_order_by_id(order.id)
+                status = str(
+                    getattr(
+                        getattr(current, "status", "unknown"),
+                        "value",
+                        getattr(current, "status", "unknown"),
+                    )
+                ).lower()
+                if status in {
+                    "canceled",
+                    "expired",
+                    "filled",
+                    "rejected",
+                    "done_for_day",
+                }:
+                    continue
+                raise error
+            cancelled_ids.add(str(order.id))
+            rows.append(
+                {
+                    "cancel_requested_at": now.isoformat(),
+                    "submitted_at": submitted_at.isoformat(),
+                    "symbol": str(order.symbol),
+                    "side": str(getattr(order.side, "value", order.side)),
+                    "quantity": float(order.qty or 0),
+                    "filled_quantity": float(order.filled_qty or 0),
+                    "age_seconds": age_seconds,
+                    "client_order_id": str(order.client_order_id),
+                    "order_id": str(order.id),
+                }
+            )
+
+        deadline = time.monotonic() + max(wait_timeout_seconds, 0.0)
+        while cancelled_ids and time.monotonic() < deadline:
+            remaining = self.client.get_orders(
+                filter=GetOrdersRequest(status=QueryOrderStatus.OPEN)
+            )
+            open_ids = {str(order.id) for order in remaining}
+            if cancelled_ids.isdisjoint(open_ids):
+                break
+            time.sleep(0.25)
+        return pd.DataFrame(rows)
 
     def submit(self, intent: OrderIntent):
         from alpaca.trading.enums import OrderSide, TimeInForce
@@ -313,7 +626,15 @@ class AlpacaPaperBroker:
             if intent.limit_price is not None
             else MarketOrderRequest(**common)
         )
-        return self.client.submit_order(order_data=request)
+        try:
+            return self.client.submit_order(order_data=request)
+        except Exception as error:
+            if "client_order_id must be unique" not in str(error).lower():
+                raise
+            try:
+                return self.client.get_order_by_client_id(intent.client_order_id)
+            except Exception:
+                raise error
 
 
 def run_paper_cycle(
@@ -353,6 +674,27 @@ def run_paper_cycle(
         .to_dict()
     )
     snapshot = snapshot or broker.snapshot(universe)
+    short_symbols = sorted(
+        latest_targets.loc[
+            latest_targets["target_weight"].lt(0), "symbol"
+        ].astype(str).str.upper().unique()
+    )
+    availability: dict[str, ShortAvailability] = {}
+    if short_symbols and paper.allow_short:
+        availability = broker.short_availability(short_symbols)
+        latest_targets["shortable"] = latest_targets["symbol"].map(
+            lambda symbol: getattr(availability.get(str(symbol).upper()), "shortable", None)
+        )
+        latest_targets["easy_to_borrow"] = latest_targets["symbol"].map(
+            lambda symbol: getattr(
+                availability.get(str(symbol).upper()), "easy_to_borrow", None
+            )
+        )
+        latest_targets["borrow_status"] = latest_targets["symbol"].map(
+            lambda symbol: getattr(
+                availability.get(str(symbol).upper()), "borrow_status", None
+            )
+        )
     intents = build_rebalance_orders(
         latest_targets,
         latest_prices,
@@ -364,6 +706,10 @@ def run_paper_cycle(
         paper.cash_buffer_pct,
         paper.execution_style,
         paper.limit_offset_bps,
+        paper.market_exit_orders,
+        paper.allow_short,
+        paper.require_easy_to_borrow,
+        availability,
     )
     rows: list[dict] = []
     for intent in intents:

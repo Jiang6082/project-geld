@@ -1,13 +1,17 @@
 from __future__ import annotations
 
 import argparse
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import json
 from pathlib import Path
 from typing import Any
 
 import pandas as pd
 
+from project_geld.close_check import (
+    bars_available_at_close,
+    build_position_reconciliation,
+)
 from project_geld.backtest import run_backtest, save_result
 from project_geld.config import AppConfig, load_config, validate_config
 from project_geld.data import (
@@ -15,7 +19,9 @@ from project_geld.data import (
     CachedBarSource,
     CsvBarSource,
     SyntheticBarSource,
+    completed_daily_bars,
     default_date_range,
+    fetch_rolling_bars,
 )
 from project_geld.experiments import grid_search, save_experiment
 from project_geld.intraday import (
@@ -28,6 +34,7 @@ from project_geld.intraday import (
 from project_geld.paper import (
     AlpacaPaperBroker,
     append_performance_snapshot,
+    implementation_shortfall,
     mark_paper_rebalance,
     paper_rebalance_due,
     run_paper_cycle,
@@ -175,6 +182,7 @@ def command_paper(args) -> None:
     context = _strategy_context(strategy)
     managed = _managed_symbols(config, strategy)
     start, end = default_date_range(config.paper.lookback_days)
+    end -= timedelta(minutes=config.paper.market_data_delay_minutes)
     source = CachedBarSource(
         AlpacaBarSource(
             config.data.feed,
@@ -185,6 +193,12 @@ def command_paper(args) -> None:
     )
     data_symbols = list(dict.fromkeys([*config.universe.data_symbols, *context]))
     bars = source.fetch(data_symbols, start, end)
+    bars = completed_daily_bars(
+        bars,
+        timezone_name=config.backtest.session_timezone,
+    )
+    if bars.empty:
+        raise RuntimeError("No completed daily bars are available for paper planning.")
     broker = AlpacaPaperBroker(config.account.credential_profile)
     snapshot = broker.snapshot(managed)
     output = Path(args.output)
@@ -245,6 +259,164 @@ def command_paper_status(args) -> None:
     )
 
 
+def command_daily_close_check(args) -> None:
+    config = load_config(args.config)
+    validate_config(config)
+    strategy = create_strategy(config.strategy.name, config.strategy.parameters)
+    if strategy.name != "daily_v4":
+        raise ValueError("daily-close-check requires the Daily V4 configuration.")
+
+    observed_at = pd.Timestamp.now(tz="UTC")
+    broker = AlpacaPaperBroker(config.account.credential_profile)
+    clock = broker.get_clock()
+    market_is_open = bool(clock.is_open)
+    context = _strategy_context(strategy)
+    managed = _managed_symbols(config, strategy)
+    start, end = default_date_range(config.paper.lookback_days)
+    end -= timedelta(minutes=config.paper.market_data_delay_minutes)
+    source = CachedBarSource(
+        AlpacaBarSource(
+            config.data.feed,
+            config.data.adjustment,
+            config.account.credential_profile,
+        ),
+        config.data.cache_dir,
+    )
+    data_symbols = list(dict.fromkeys([*config.universe.data_symbols, *context]))
+    bars = bars_available_at_close(
+        source.fetch(data_symbols, start, end),
+        observed_at,
+        market_is_open,
+        config.backtest.session_timezone,
+    )
+    if bars.empty:
+        raise RuntimeError("No completed daily bars are available for the close check.")
+
+    snapshot = broker.snapshot(managed)
+    result = run_paper_cycle(
+        bars,
+        strategy,
+        broker,
+        config.risk,
+        config.paper,
+        managed,
+        submit=False,
+        snapshot=snapshot,
+        context_symbols=context,
+        confirmation_env=config.account.confirmation_env,
+    )
+    latest_prices = (
+        bars.sort_values("timestamp")
+        .groupby("symbol", as_index=False)
+        .tail(1)
+        .set_index("symbol")["close"]
+        .astype(float)
+        .to_dict()
+    )
+    reconciliation = build_position_reconciliation(
+        result.targets, latest_prices, snapshot
+    )
+    due, elapsed, latest_session = paper_rebalance_due(
+        bars, config.paper, strategy.name
+    )
+    local_observed = observed_at.tz_convert(config.backtest.session_timezone)
+    local_midnight = local_observed.normalize().tz_convert("UTC")
+    activity = broker.order_activity(local_midnight)
+    status_counts = (
+        activity["status"].value_counts().to_dict() if len(activity) else {}
+    )
+    latest_local_date = latest_session.tz_convert(
+        config.backtest.session_timezone
+    ).date()
+    current_local_date = local_observed.date()
+    universe_age_days = (
+        (observed_at - pd.Timestamp(config.universe.symbols_as_of)).days
+        if config.universe.symbols_as_of is not None
+        else None
+    )
+    drift_threshold = max(
+        float(getattr(strategy, "no_trade_band", 0.0)),
+        config.risk.min_trade_pct_equity,
+    )
+    summary = {
+        "observed_at": observed_at.isoformat(),
+        "market_is_open": market_is_open,
+        "mode": "prior_close_preview" if market_is_open else "final_close",
+        "latest_signal_session": latest_session.isoformat(),
+        "signal_includes_current_session": latest_local_date == current_local_date,
+        "equity": snapshot.equity,
+        "last_equity": snapshot.last_equity,
+        "daily_return": (
+            snapshot.equity / snapshot.last_equity - 1
+            if snapshot.last_equity > 0
+            else 0.0
+        ),
+        "cash": snapshot.cash,
+        "current_gross_exposure": float(
+            reconciliation["current_weight"].abs().sum()
+        ),
+        "target_gross_exposure": float(
+            reconciliation["target_weight"].abs().sum()
+        ),
+        "significant_drift_positions": int(
+            reconciliation["weight_drift"].abs().ge(drift_threshold).sum()
+        ),
+        "unexpected_positions": int(reconciliation["unexpected_position"].sum()),
+        "missing_price_positions": int(reconciliation["missing_price"].sum()),
+        "open_order_symbols": sorted(snapshot.open_order_symbols),
+        "orders_observed_today": int(len(activity)),
+        "order_status_counts": status_counts,
+        "rejected_orders": int(status_counts.get("rejected", 0)),
+        "partially_filled_orders": int(status_counts.get("partially_filled", 0)),
+        "staged_order_count": int(len(result.orders)),
+        "rebalance_due_next_open": due,
+        "sessions_since_rebalance": elapsed,
+        "rebalance_interval_sessions": config.paper.rebalance_every_sessions,
+        "universe_age_days": universe_age_days,
+        "universe_is_stale": bool(
+            universe_age_days is not None
+            and universe_age_days > config.paper.max_universe_age_days
+        ),
+    }
+
+    output = Path(args.output)
+    output.mkdir(parents=True, exist_ok=True)
+    result.targets.to_csv(output / "staged_targets.csv", index=False)
+    result.orders.to_csv(output / "staged_orders.csv", index=False)
+    reconciliation.to_csv(output / "position_reconciliation.csv", index=False)
+    activity.to_csv(output / "order_activity.csv", index=False)
+    append_performance_snapshot(snapshot, output / "close_performance.csv", observed_at)
+    (output / "close_summary.json").write_text(
+        json.dumps(summary, indent=2, sort_keys=True), encoding="utf-8"
+    )
+    history_path = output / "close_summary_history.csv"
+    history = pd.read_csv(history_path) if history_path.exists() else pd.DataFrame()
+    history = pd.concat(
+        [history, pd.DataFrame([{**summary, "order_status_counts": json.dumps(status_counts)}])],
+        ignore_index=True,
+    )
+    history.to_csv(history_path, index=False)
+
+    print(
+        f"Daily V4 close check: {summary['mode']}; equity USD "
+        f"{snapshot.equity:,.2f}; daily return {summary['daily_return']:.2%}"
+    )
+    print(
+        f"Signal session {latest_local_date}; rebalance due next open: {due} "
+        f"({elapsed}/{config.paper.rebalance_every_sessions} sessions)"
+    )
+    print(
+        f"Staged {len(result.orders)} order(s); submitted 0. "
+        f"Open order symbols: {len(snapshot.open_order_symbols)}; "
+        f"rejected today: {summary['rejected_orders']}; "
+        f"partial today: {summary['partially_filled_orders']}"
+    )
+    if market_is_open:
+        print("Market is open; the current partial daily bar was excluded.")
+    elif not summary["signal_includes_current_session"]:
+        print("Warning: the current session's final daily bar was not available.")
+
+
 def command_intraday_backtest(args) -> None:
     config = load_config(args.config)
     validate_config(config)
@@ -291,6 +463,14 @@ def command_intraday_paper(args) -> None:
     strategy = create_strategy(config.strategy.name, config.strategy.parameters)
     if not strategy.name.startswith("intra_v"):
         raise ValueError("intraday-paper-once requires an intraday strategy config.")
+    if config.universe.symbols_as_of is not None:
+        universe_age = (
+            pd.Timestamp.now(tz="UTC") - pd.Timestamp(config.universe.symbols_as_of)
+        ).days
+        if universe_age > config.paper.max_universe_age_days:
+            raise RuntimeError(
+                f"Universe snapshot is {universe_age} days old; refresh it before paper planning."
+            )
     context = _strategy_context(strategy)
     managed = _managed_symbols(config, strategy)
     start, end = default_date_range(config.intraday.lookback_days)
@@ -302,7 +482,14 @@ def command_intraday_paper(args) -> None:
     symbols = list(
         dict.fromkeys([*config.universe.data_symbols, *context])
     )
-    one_minute = source.fetch(symbols, start, end, "1Min")
+    one_minute = fetch_rolling_bars(
+        source,
+        symbols,
+        start,
+        end,
+        "1Min",
+        config.data.cache_dir / "paper-rolling-1min.pkl",
+    )
     bars = resample_intraday_bars(
         one_minute,
         config.intraday.bar_minutes,
@@ -313,9 +500,26 @@ def command_intraday_paper(args) -> None:
     latest_bar = pd.Timestamp(bars["timestamp"].max())
     due = intraday_cycle_due(config.intraday.state_file, latest_bar)
     broker = AlpacaPaperBroker(config.account.credential_profile)
-    snapshot = broker.snapshot(managed)
     output = Path(args.output)
     output.mkdir(parents=True, exist_ok=True)
+    cancellations = pd.DataFrame()
+    if args.submit and config.paper.stale_order_seconds > 0:
+        cancellations = broker.cancel_stale_orders(
+            managed,
+            config.paper.stale_order_seconds,
+        )
+        if len(cancellations):
+            history_path = output / "order_cancellations.csv"
+            history = (
+                pd.read_csv(history_path)
+                if history_path.exists()
+                else pd.DataFrame()
+            )
+            history = pd.concat([history, cancellations], ignore_index=True)
+            history.drop_duplicates(subset=["order_id"], keep="last").to_csv(
+                history_path, index=False
+            )
+    snapshot = broker.snapshot(managed)
     performance = append_performance_snapshot(snapshot, output / "performance.csv")
     submit = args.submit and due
     result = run_paper_cycle(
@@ -332,10 +536,44 @@ def command_intraday_paper(args) -> None:
     )
     result.targets.to_csv(output / "latest_targets.csv", index=False)
     result.orders.to_csv(output / "paper_orders.csv", index=False)
+    if submit and len(result.orders):
+        # Shortfall logging is monitoring only; it must never disrupt the trading
+        # cycle or the state marking that follows, so failures are contained.
+        try:
+            session_open = latest_bar.tz_convert(
+                config.backtest.session_timezone
+            ).normalize().tz_convert("UTC")
+            shortfall = implementation_shortfall(
+                result.orders, broker.order_activity(session_open)
+            )
+            shortfall.insert(0, "decision_bar", latest_bar.isoformat())
+            shortfall_path = output / "implementation_shortfall.csv"
+            history = (
+                pd.read_csv(shortfall_path)
+                if shortfall_path.exists()
+                else pd.DataFrame()
+            )
+            pd.concat([history, shortfall], ignore_index=True).drop_duplicates(
+                subset=["decision_bar", "client_order_id"], keep="last"
+            ).to_csv(shortfall_path, index=False)
+            filled = shortfall[~shortfall["missed"]]
+            average_shortfall = (
+                float(filled["shortfall_bps"].mean()) if len(filled) else float("nan")
+            )
+            print(
+                f"Implementation shortfall: {len(filled)}/{len(shortfall)} filled; "
+                f"average {average_shortfall:.2f} bps (research invalidation > 2 bps)."
+            )
+        except Exception as error:  # monitoring must never break the trading cycle
+            print(f"Warning: implementation-shortfall logging failed: {error}")
     print(
         f"Intraday paper account '{config.account.name}': "
         f"USD {performance['equity']:,.2f}; latest completed bar {latest_bar}"
     )
+    if len(cancellations):
+        print(
+            f"Cancelled {len(cancellations)} stale managed order(s) before replanning."
+        )
     print(f"Cycle due: {due}")
     if args.submit and not due:
         print("Submission requested but this completed bar was already processed.")
@@ -423,6 +661,10 @@ def build_parser() -> argparse.ArgumentParser:
     status_parser = subparsers.add_parser("paper-status")
     status_parser.add_argument("--output", default="artifacts/paper")
     status_parser.set_defaults(func=command_paper_status)
+
+    close_parser = subparsers.add_parser("daily-close-check")
+    close_parser.add_argument("--output", default="artifacts/paper-daily-v4-close")
+    close_parser.set_defaults(func=command_daily_close_check)
 
     intraday_backtest = subparsers.add_parser("intraday-backtest")
     intraday_backtest.add_argument(

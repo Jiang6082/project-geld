@@ -2,7 +2,9 @@
 
 Canonical production-facing names use the trading horizon followed by a version:
 
-- `daily_v4`: current daily control, 40% SPY core plus 60% active residual momentum.
+- `daily_v4`: current daily control, 75% SPY core plus 25% active residual
+  momentum with regime-aware exposure (see PAPER_DAILY_V4.md for the July 2026
+  PnL-driven switch from the earlier 40/60 challenger).
 - `daily_v5`: benchmark-aware Daily V4 challenger.
 - `intra_v1`: current 15-minute relative-reversal control.
 - `intra_v2`: selective once-daily relative-reversal challenger.

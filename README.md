@@ -9,7 +9,7 @@ This is research software, not investment advice. It is intentionally
 paper-only and has no live-trading mode.
 
 The platform also supports an isolated dual-account paper workflow: a slower
-Daily V4 account and a separate 15-minute Intra V1 account with independent
+Daily V4 account and a separate 15-minute Intra V15 account with independent
 Alpaca credentials, state, risk limits, and performance logs. See
 `DUAL_ACCOUNT_PAPER.md` for the proposed allocation and exact commands.
 Long-horizon intraday findings are recorded in `LONG_INTRADAY_RESEARCH.md` and
@@ -23,7 +23,13 @@ as the primary evidence and promotes the point-in-time/SIP specification to the
 research control; V12 remains research-only.
 `INTRADAY_V13_RESEARCH.md` adds causal volatility, breadth, and correlation
 controls. V13 improves the point-in-time result across SIP, IEX, extended
-history, and cost stress, and is the current intraday research challenger.
+history, and cost stress, and is the current intraday paper challenger.
+`INTRADAY_V14_RESEARCH.md` records a rejected 99%-active-session challenger.
+Its best zero-cost IEX variant was positive, but it became negative at only two
+basis points of slippage per side and was not promoted to paper.
+`INTRADAY_V15_RESEARCH.md` combines a confidence-scaled daily SPY opening-trend
+sleeve with the selective V13 stock overlay. V15 is the current high-activity paper
+candidate; V13 remains its reproducible alpha control.
 
 ## What is included
 
@@ -53,6 +59,8 @@ history, and cost stress, and is the current intraday research challenger.
   - `intra_v12`, the validated quiet-volume, decisive-break research control.
   - `intra_v13`, the PIT/SIP V12 challenger with causal volatility, breadth,
     and correlation controls.
+  - `intra_v14`, a rejected near-daily eight-name long/short experiment.
+  - `intra_v15`, a daily liquid-index sleeve plus selective V13 overlay.
 - Next-session-open backtests, avoiding same-close look-ahead fills.
 - Configurable slippage, per-share fees, fractional shares, and rebalance cadence.
 - Gross-exposure and per-position limits.
@@ -69,6 +77,9 @@ history, and cost stress, and is the current intraday research challenger.
   - open-order reconciliation;
   - deterministic client order IDs;
   - order-notional and position limits.
+  - opt-in signed targets with account-level shorting checks;
+  - per-symbol shortable/easy-to-borrow checks;
+  - whole-share short orders and unrestricted risk-reducing covers.
 
 ## Architecture
 
@@ -184,10 +195,43 @@ To enable submission:
 The TradingClient is always constructed with paper=True. There is no option
 that points this project at Alpaca live trading.
 
+Daily V4 uses 20-minute-delayed SIP data and explicitly excludes the current
+session's daily bar, allowing Monday orders to use Friday's completed SIP
+signal without a real-time SIP subscription. Launch its one-cycle Windows
+runner with `scripts/run-daily-v4-paper.ps1`; see `PAPER_DAILY_V4.md`.
+
+Install the Daily V4 and Intra V15 execution tasks plus the Daily V4 close
+reconciliation task with:
+
+    .\scripts\install-paper-tasks.ps1
+
+The execution tasks launch at 09:25 ET. The read-only Daily V4 close task runs
+at 16:25 ET after the configured SIP delay. All ignore duplicate instances, start when available,
+and retry a failed runner. The computer must be powered on and the Windows user
+logged in.
+
+For the Intra V15 hybrid strategy, use the dedicated IEX paper configuration:
+
+    geld --config configs/paper-intra-v15.toml intraday-paper-once \
+      --output artifacts/paper-intra-v15
+
+The executable paper configuration uses IEX because the configured paper
+account does not have recent SIP entitlement. To run the strategy throughout
+a session on Windows, launch `scripts/run-intra-v15-paper.ps1`; add `-DryRun`
+to exercise the loop without submitting. The runner evaluates each newly
+completed 15-minute bar from 09:31 through 15:46 ET, including the mandatory
+15:30 SPY and 15:45 overlay flatten targets. Each submitting cycle records
+per-order implementation shortfall, fill rate, and missed orders to
+`artifacts/paper-intra-v15/implementation_shortfall.csv` so the cost-sensitive
+daily sleeve can be checked against its two-basis-point invalidation gate. Both
+the intraday and daily paper paths refuse to plan on a universe snapshot older
+than `max_universe_age_days`. See `PAPER_INTRADAY_V15.md` for the readiness record and
+operating checklist.
+
 ## Safety and research rules
 
 - Never commit .env.
-- Keep paper submission disabled while developing strategies.
+- Keep paper submission disabled until a strategy has a locked readiness record.
 - Treat IEX and SIP as different datasets; record the selected feed.
 - Judge results after slippage and other realistic costs.
 - Do not choose parameters from test-period performance.
@@ -206,9 +250,10 @@ order idempotency inputs, and the daily-loss guard.
 
 ## Current scope
 
-Version 0.1 supports daily and intraday research. Intraday backtests can opt in
-to signed short targets; paper execution remains long-only and rejects negative
-weights. Momentum V2 can accept point-in-time membership periods for
+Version 0.1 supports daily and intraday research. Intraday backtests and the
+paper executor can opt in to signed short targets; short paper orders fail
+closed unless both the account and current asset status permit them. Momentum
+V2 can accept point-in-time membership periods for
 survivorship stress tests. The engine does not model historical borrow
 availability, locate fees, tick/order-book events, factor attribution, a
 distributed experiment scheduler, or a persistent paper daemon.

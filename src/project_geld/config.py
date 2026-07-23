@@ -42,6 +42,7 @@ class StrategyConfig:
 class BacktestConfig:
     initial_cash: float = 100_000.0
     slippage_bps: float = 5.0
+    symbol_slippage_bps: dict[str, float] = field(default_factory=dict)
     commission_per_share: float = 0.0
     allow_fractional: bool = True
     rebalance_every: int = 5
@@ -69,6 +70,9 @@ class RiskConfig:
 @dataclass(frozen=True)
 class PaperConfig:
     enabled: bool = False
+    allow_short: bool = False
+    require_easy_to_borrow: bool = True
+    market_data_delay_minutes: int = 0
     lookback_days: int = 400
     client_order_prefix: str = "geld"
     rebalance_every_sessions: int = 10
@@ -77,6 +81,8 @@ class PaperConfig:
     max_universe_age_days: int = 45
     execution_style: str = "market"
     limit_offset_bps: float = 0.0
+    stale_order_seconds: int = 0
+    market_exit_orders: bool = False
 
 
 @dataclass(frozen=True)
@@ -164,6 +170,13 @@ def load_config(path: str | Path = "config.example.toml") -> AppConfig:
         risk=RiskConfig(**raw.get("risk", {})),
         paper=PaperConfig(
             enabled=bool(raw.get("paper", {}).get("enabled", False)),
+            allow_short=bool(raw.get("paper", {}).get("allow_short", False)),
+            require_easy_to_borrow=bool(
+                raw.get("paper", {}).get("require_easy_to_borrow", True)
+            ),
+            market_data_delay_minutes=int(
+                raw.get("paper", {}).get("market_data_delay_minutes", 0)
+            ),
             lookback_days=int(raw.get("paper", {}).get("lookback_days", 400)),
             client_order_prefix=str(
                 raw.get("paper", {}).get("client_order_prefix", "geld")
@@ -188,6 +201,12 @@ def load_config(path: str | Path = "config.example.toml") -> AppConfig:
             limit_offset_bps=float(
                 raw.get("paper", {}).get("limit_offset_bps", 0.0)
             ),
+            stale_order_seconds=int(
+                raw.get("paper", {}).get("stale_order_seconds", 0)
+            ),
+            market_exit_orders=bool(
+                raw.get("paper", {}).get("market_exit_orders", False)
+            ),
         ),
         intraday=IntradayConfig(
             bar_minutes=int(raw.get("intraday", {}).get("bar_minutes", 15)),
@@ -206,6 +225,10 @@ def validate_config(config: AppConfig) -> None:
         raise ValueError("The universe must contain at least one symbol.")
     if config.backtest.initial_cash <= 0:
         raise ValueError("initial_cash must be positive.")
+    if config.backtest.slippage_bps < 0 or any(
+        float(value) < 0 for value in config.backtest.symbol_slippage_bps.values()
+    ):
+        raise ValueError("slippage_bps values cannot be negative.")
     if config.backtest.rebalance_every < 1:
         raise ValueError("rebalance_every must be at least 1.")
     if config.backtest.missing_price_exit_sessions < 1:
@@ -241,6 +264,8 @@ def validate_config(config: AppConfig) -> None:
         raise ValueError("Symbol order equity-percentage limits must be in (0, 1].")
     if config.paper.rebalance_every_sessions < 1:
         raise ValueError("rebalance_every_sessions must be at least 1.")
+    if config.paper.market_data_delay_minutes < 0:
+        raise ValueError("paper.market_data_delay_minutes cannot be negative.")
     if not 0 <= config.paper.cash_buffer_pct < 1:
         raise ValueError("cash_buffer_pct must be in [0, 1).")
     if config.paper.max_universe_age_days < 1:
@@ -249,6 +274,8 @@ def validate_config(config: AppConfig) -> None:
         raise ValueError("paper.execution_style must be market or marketable_limit.")
     if not 0 <= config.paper.limit_offset_bps <= 100:
         raise ValueError("paper.limit_offset_bps must be in [0, 100].")
+    if config.paper.stale_order_seconds < 0:
+        raise ValueError("paper.stale_order_seconds cannot be negative.")
     if config.intraday.bar_minutes not in {1, 5, 10, 15, 30, 60}:
         raise ValueError("intraday.bar_minutes must be one of 1, 5, 10, 15, 30, 60.")
     if config.intraday.lookback_days < 1:

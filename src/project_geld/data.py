@@ -229,6 +229,75 @@ class CachedBarSource:
         return bars
 
 
+def fetch_rolling_bars(
+    source: BarSource,
+    symbols: list[str],
+    start: datetime,
+    end: datetime,
+    timeframe: str,
+    cache_path: str | Path,
+    overlap_minutes: int = 5,
+) -> pd.DataFrame:
+    """Maintain a local rolling bar window for repeated paper cycles."""
+    path = Path(cache_path)
+    wanted = {symbol.upper() for symbol in symbols}
+    cached = pd.DataFrame(columns=BAR_COLUMNS)
+    if path.exists():
+        cached = normalize_bars(pd.read_pickle(path))
+        cached = cached[
+            cached["symbol"].isin(wanted)
+            & cached["timestamp"].ge(pd.Timestamp(start))
+        ]
+
+    fetch_start = start
+    if len(cached):
+        fetch_start = max(
+            pd.Timestamp(start).to_pydatetime(),
+            (
+                cached["timestamp"].max()
+                - pd.Timedelta(max(overlap_minutes, 0), unit="min")
+            ).to_pydatetime(),
+        )
+    fresh = source.fetch(symbols, fetch_start, end, timeframe)
+    parts = [frame for frame in (cached, fresh) if not frame.empty]
+    combined = (
+        normalize_bars(pd.concat(parts, ignore_index=True))
+        if parts
+        else pd.DataFrame(columns=BAR_COLUMNS)
+    )
+    combined = combined[
+        combined["symbol"].isin(wanted)
+        & combined["timestamp"].between(pd.Timestamp(start), pd.Timestamp(end))
+    ]
+    combined = combined.drop_duplicates(
+        subset=["timestamp", "symbol"], keep="last"
+    ).sort_values(["timestamp", "symbol"])
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_suffix(path.suffix + ".tmp")
+    combined.to_pickle(temporary)
+    temporary.replace(path)
+    return combined.reset_index(drop=True)
+
+
+def completed_daily_bars(
+    bars: pd.DataFrame,
+    as_of: datetime | pd.Timestamp | None = None,
+    timezone_name: str = "America/New_York",
+) -> pd.DataFrame:
+    """Exclude the current session so paper signals use completed daily bars."""
+    frame = normalize_bars(bars)
+    if frame.empty:
+        return frame
+    observed_at = pd.Timestamp.now(tz="UTC") if as_of is None else pd.Timestamp(as_of)
+    if observed_at.tzinfo is None:
+        observed_at = observed_at.tz_localize("UTC")
+    current_date = observed_at.tz_convert(timezone_name).date()
+    completed = frame[
+        frame["timestamp"].dt.tz_convert(timezone_name).dt.date < current_date
+    ]
+    return normalize_bars(completed)
+
+
 def default_date_range(lookback_days: int = 730) -> tuple[datetime, datetime]:
     end = datetime.now(timezone.utc)
     return end - timedelta(days=lookback_days), end

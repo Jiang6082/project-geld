@@ -77,6 +77,22 @@ def test_slippage_reduces_ending_equity():
     assert costly.equity.iloc[-1]["equity"] < no_cost.equity.iloc[-1]["equity"]
 
 
+def test_symbol_specific_slippage_overrides_default_cost():
+    base = BacktestConfig(initial_cash=10_000, slippage_bps=100, rebalance_every=1)
+    default_cost = run_backtest(simple_bars(), AlwaysLong(), base, RiskConfig())
+    spy_override = run_backtest(
+        simple_bars(),
+        AlwaysLong(),
+        replace(base, symbol_slippage_bps={"SPY": 0.0}),
+        RiskConfig(),
+    )
+    assert spy_override.trades.iloc[0]["fill_price"] == 110.0
+    assert default_cost.trades.iloc[0]["fill_price"] == 111.1
+    assert spy_override.equity.iloc[-1]["equity"] > default_cost.equity.iloc[-1][
+        "equity"
+    ]
+
+
 def test_position_weight_cap_is_applied():
     result = run_backtest(
         simple_bars(),
@@ -165,6 +181,52 @@ def test_missing_symbol_is_forced_out_with_conservative_haircut():
     ]
     assert len(forced) == 1
     assert forced.iloc[0]["fill_price"] == 111 * 0.75
+
+
+def test_missing_price_exit_counts_sessions_not_intraday_bars():
+    timestamps = pd.DatetimeIndex(
+        [
+            "2026-07-13 13:30:00+00:00",
+            "2026-07-13 13:45:00+00:00",
+            "2026-07-13 14:00:00+00:00",
+            "2026-07-14 13:30:00+00:00",
+            "2026-07-15 13:30:00+00:00",
+        ]
+    )
+    spy = pd.DataFrame(
+        {
+            "timestamp": timestamps,
+            "symbol": "SPY",
+            "open": 100.0,
+            "high": 100.0,
+            "low": 100.0,
+            "close": 100.0,
+            "volume": 1_000_000,
+        }
+    )
+    old = spy.iloc[:2].copy()
+    old["symbol"] = "OLD"
+    result = run_backtest(
+        pd.concat([spy, old], ignore_index=True),
+        AlwaysLong(),
+        BacktestConfig(
+            initial_cash=10_000,
+            slippage_bps=0,
+            missing_price_exit_sessions=2,
+            missing_price_haircut_pct=0.25,
+            session_timezone="America/New_York",
+        ),
+        RiskConfig(max_position_weight=0.5),
+        tradable_symbols=["OLD"],
+    )
+    forced = result.trades[
+        result.trades["exit_reason"].eq("missing_price_forced_exit")
+    ]
+    assert len(forced) == 1
+    assert forced.iloc[0]["timestamp"] == pd.Timestamp(
+        "2026-07-15 13:30:00+00:00"
+    )
+    assert forced.iloc[0]["fill_price"] == 100 * 0.75
 
 
 def test_short_targets_require_opt_in_and_profit_when_price_falls():
