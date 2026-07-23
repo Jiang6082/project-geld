@@ -20,6 +20,13 @@ and the runner log to `artifacts/morning-review/runner-YYYYMMDD.log`.
 
 ## What the brief contains
 
+A **Market posture** section (keyless): the `market-breadth-analyzer` skill's
+0-100 composite health score, zone, and suggested equity-exposure band, fetched
+from public data and wired directly into the brief. `macro-regime-detector` /
+`exposure-coach` are left out of the automated brief because they need a **paid
+FMP tier** — the free tier serves SPY but returns 402 (premium) for TLT / IWM /
+sector ETFs, which those skills require.
+
 For each account (Daily V4 swing, Intra V15 intraday):
 
 - equity, day return, cumulative return, drawdown from peak, down-session streak;

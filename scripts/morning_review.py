@@ -12,6 +12,9 @@ session, layer the market-posture / discipline skills on top (see DAILY_REVIEW.m
 from __future__ import annotations
 
 import argparse
+import re
+import subprocess
+import sys
 from pathlib import Path
 
 import pandas as pd
@@ -89,6 +92,41 @@ def _shortfall_line(art_dir: Path, core: str) -> str:
     )
 
 
+def _market_breadth(art_dir: Path) -> str | None:
+    """Run the keyless market-breadth-analyzer skill (if installed) and return a
+    one-line posture. Advisory context only; failures degrade gracefully."""
+    script = (
+        Path.home() / ".claude" / "skills" / "market-breadth-analyzer"
+        / "scripts" / "market_breadth_analyzer.py"
+    )
+    if not script.exists():
+        return None
+    out = art_dir / "breadth"
+    out.mkdir(parents=True, exist_ok=True)
+    try:
+        result = subprocess.run(
+            [sys.executable, str(script), "--output-dir", str(out)],
+            cwd=str(script.parent), capture_output=True, text=True, timeout=120,
+        )
+    except Exception:
+        return None
+    text = result.stdout
+
+    def grab(pat: str) -> str | None:
+        m = re.search(pat, text)
+        return m.group(1).strip() if m else None
+
+    score = grab(r"Composite Score:\s*([\d.]+)")
+    if not score:
+        return None
+    zone = grab(r"Health Zone:\s*(.+)")
+    exposure = grab(r"Equity Exposure:\s*(.+)")
+    return (
+        f"market breadth **{score}/100** ({zone or '?'}); "
+        f"suggested equity exposure {exposure or '?'}"
+    )
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", default="artifacts/morning-review")
@@ -124,11 +162,20 @@ def main() -> None:
             )
             lines.append(f"- {_shortfall_line(art_dir, str(core))}")
         lines.append("")
+    breadth = _market_breadth(ROOT / args.output)
+    lines.append("## Market posture")
+    lines.append(f"- {breadth}" if breadth else "- market breadth: unavailable")
+    lines.append(
+        "- macro regime: skipped (needs a paid FMP tier; free tier lacks the "
+        "ETF histories the detector requires)."
+    )
+    lines.append("")
     lines += [
         "## Next (in a Claude session)",
-        "- Run `exposure-coach` / `macro-regime-detector` / `market-breadth-analyzer` "
-        "for market posture (needs `FMP_API_KEY`).",
-        "- Run `pre-trade-discipline-gate` before any manual action. All advisory.",
+        "- Breadth posture above is auto-included (keyless). `macro-regime-detector` / "
+        "`exposure-coach` need a paid FMP tier (free tier lacks the ETF histories).",
+        "- Run `pre-trade-discipline-gate` / `drawdown-circuit-breaker` before any "
+        "manual action. All advisory.",
         "",
     ]
     brief = "\n".join(lines)
