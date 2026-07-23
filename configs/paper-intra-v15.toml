@@ -51,6 +51,11 @@ base_weak_weight = 0.005
 # total return 3.26% -> 3.45%, Sharpe 0.82 -> 0.88, lower turnover and drawdown,
 # positive in every period.
 base_saturation_bps = 15.0
+# Trend/chop gate: only take the opening-trend sleeve when the morning's
+# efficiency ratio (net move / summed path to 10:30) is >= 0.30, i.e. a genuinely
+# trending morning. Exact IEX reproduction: total return 3.45% -> 3.89%, Sharpe
+# 0.88 -> 1.00, lower turnover; improvement stable across 0.20-0.40.
+base_min_efficiency_ratio = 0.30
 timezone = "America/New_York"
 
 [intraday]

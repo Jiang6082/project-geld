@@ -118,3 +118,16 @@ every sub-period.
   code silently hard-coded these and forced a large volatility ceiling through a
   duplicated update; the ceiling is now explicit and disabled by default (the
   wrapper already bounds sleeve gross at `active_weight`).
+
+### Evaluated and not adopted
+
+- **Volatility-scaled (risk-managed) momentum.** `sleeve_volatility_target` is
+  implemented (scales the sleeve down in high-vol regimes) but left off. At
+  75/25 the -33.6% max drawdown is driven by the 75% SPY core, not the 25%
+  sleeve, so scaling the sleeve does not reduce drawdown and slightly lowers
+  return (0.08 target -> 297% vs 306% full-sample). It would only help a
+  sleeve-heavy allocation.
+- **Rebalance cadence.** The 21-session cadence is near-optimal on PnL, not
+  arbitrary: every 5 sessions returns 276% at 2.65x turnover and every 42
+  returns 281% at 1.34x, versus 306% at 1.73x for 21. Trading more often adds
+  cost without capturing more of this monthly-horizon signal.

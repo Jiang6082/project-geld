@@ -24,6 +24,8 @@ class IntraV15(IntraV13):
       3.26% -> 3.45%, Sharpe 0.82 -> 0.88, lower turnover and drawdown).
     - 15.0.5: automatic shortfall kill-switch — the paper path flattens the base
       sleeve when its trailing implementation shortfall breaches ~2 bps.
+    - 15.0.6: trend/chop gate on the base sleeve (total return 3.45% -> 3.89%,
+      Sharpe 0.88 -> 1.00); the opening-trend sleeve sits out choppy mornings.
     """
 
     core_symbol: str = "SPY"
@@ -38,9 +40,13 @@ class IntraV15(IntraV13):
     # at base_saturation_bps, instead of stepping straight to full weight. None
     # keeps the original two-tier step behavior.
     base_saturation_bps: float | None = None
+    # Trend/chop gate: require the morning's Kaufman efficiency ratio (net move /
+    # summed path from the open to the signal bar) to be at least this value,
+    # so the opening-trend sleeve sits out choppy sessions. None disables it.
+    base_min_efficiency_ratio: float | None = None
     base_weight: float | None = None
     name: str = "intra_v15"
-    version: str = "Intra V15.0.5"
+    version: str = "Intra V15.0.6"
 
     def __post_init__(self) -> None:
         super().__post_init__()
@@ -68,6 +74,10 @@ class IntraV15(IntraV13):
             and self.base_saturation_bps <= self.base_min_signal_bps
         ):
             raise ValueError("base_saturation_bps must exceed base_min_signal_bps.")
+        if self.base_min_efficiency_ratio is not None and not (
+            0 <= self.base_min_efficiency_ratio <= 1
+        ):
+            raise ValueError("base_min_efficiency_ratio must be in [0, 1] when set.")
         if _clock(self.base_signal_time) >= _clock(self.base_flatten_at):
             raise ValueError("base_signal_time must precede base_flatten_at.")
         if _clock(self.base_flatten_at) > _clock(self.flatten_at):
@@ -90,6 +100,12 @@ class IntraV15(IntraV13):
         first_open = open_[self.core_symbol].groupby(sessions).transform("first")
         opening_return = close[self.core_symbol].div(first_open).sub(1.0)
 
+        efficiency = None
+        if self.base_min_efficiency_ratio is not None:
+            core_close = close[self.core_symbol]
+            path = core_close.groupby(sessions).diff().abs().groupby(sessions).cumsum()
+            efficiency = core_close.sub(first_open).abs().div(path.replace(0.0, np.nan))
+
         records: list[dict] = []
         for _, session_index in close.groupby(sessions).groups.items():
             direction = 0.0
@@ -99,12 +115,18 @@ class IntraV15(IntraV13):
                 )
                 score = opening_return.at[timestamp]
                 if local_time == _clock(self.base_signal_time) and pd.notna(score):
+                    ratio = None if efficiency is None else efficiency.at[timestamp]
+                    choppy = efficiency is not None and (
+                        pd.isna(ratio) or ratio < self.base_min_efficiency_ratio
+                    )
                     sign = float(np.sign(score))
                     magnitude_bps = abs(float(score)) * 10_000
                     full = (
                         self.base_long_weight if sign > 0 else self.base_short_weight
                     )
-                    if sign == 0.0:
+                    if choppy:
+                        direction = 0.0
+                    elif sign == 0.0:
                         direction = 0.0
                     elif self.base_saturation_bps is None:
                         direction = (
