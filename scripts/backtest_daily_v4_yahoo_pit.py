@@ -81,8 +81,8 @@ def main() -> None:
     args = parser.parse_args()
 
     start, end = pd.Timestamp(args.start), pd.Timestamp(args.end)
-    p1 = int((start - pd.Timedelta(days=365)).timestamp())
-    p2 = int((end + pd.Timedelta(days=2)).timestamp())
+    p1 = int(start.timestamp()) - 365 * 86_400  # ~1y warmup
+    p2 = int(end.timestamp()) + 2 * 86_400
 
     if args.constituents:
         hist = pd.read_csv(args.constituents)
@@ -154,10 +154,13 @@ def main() -> None:
 
     print(f"\ncoverage {coverage}/{len(universe)} (~{100*coverage//max(len(universe),1)}%) "
           f"-- partial; result is somewhat optimistic (see docstring)")
+    mid = "2010-01-01"
+    slices = [("full", args.start, args.end)]
+    if pd.Timestamp(args.start) < pd.Timestamp(mid) < pd.Timestamp(args.end):
+        slices += [(f"{start.year}-2009", args.start, "2009-12-31"),
+                   (f"2010-{end.year}", mid, args.end)]
     print(f"{'period':14} {'V4_tot':>8} {'V4_shrp':>8} {'V4_dd':>7} | {'SPY_tot':>8} {'SPY_dd':>7}")
-    for name, s, e in [("full", args.start, args.end),
-                       ("crash_07_09", args.start, "2009-12-31"),
-                       ("post_2010", "2010-01-01", args.end)]:
+    for name, s, e in slices:
         m = period_metrics(result, s, e)
         b = period_metrics(spy, s, e)
         if m["total_return"] != 0.0:
