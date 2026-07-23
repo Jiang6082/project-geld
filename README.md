@@ -11,25 +11,34 @@ paper-only and has no live-trading mode.
 The platform also supports an isolated dual-account paper workflow: a slower
 Daily V4 account and a separate 15-minute Intra V15 account with independent
 Alpaca credentials, state, risk limits, and performance logs. See
-`DUAL_ACCOUNT_PAPER.md` for the proposed allocation and exact commands.
-Long-horizon intraday findings are recorded in `LONG_INTRADAY_RESEARCH.md` and
-the short-continuation follow-up is in `INTRADAY_V7_V9_RESEARCH.md`.
-The locked, order-free forward protocol is in `FORWARD_SHADOW.md`.
+`docs/paper/DUAL_ACCOUNT_PAPER.md` for the proposed allocation and exact commands.
+Long-horizon intraday findings are recorded in `docs/research/LONG_INTRADAY_RESEARCH.md` and
+the short-continuation follow-up is in `docs/research/INTRADAY_V7_V9_RESEARCH.md`.
+The locked, order-free forward protocol is in `docs/research/FORWARD_SHADOW.md`.
 V12 parameter, timing, concentration, and universe checks are in
-`INTRADAY_V12_STRESS.md`.
+`docs/research/INTRADAY_V12_STRESS.md`.
 The stronger causal-universe and IEX-versus-SIP validation is in
-`INTRADAY_V12_PIT_VALIDATION.md`. It rejects the fixed-current-basket IEX result
+`docs/research/INTRADAY_V12_PIT_VALIDATION.md`. It rejects the fixed-current-basket IEX result
 as the primary evidence and promotes the point-in-time/SIP specification to the
 research control; V12 remains research-only.
-`INTRADAY_V13_RESEARCH.md` adds causal volatility, breadth, and correlation
+`docs/research/INTRADAY_V13_RESEARCH.md` adds causal volatility, breadth, and correlation
 controls. V13 improves the point-in-time result across SIP, IEX, extended
 history, and cost stress, and is the current intraday paper challenger.
-`INTRADAY_V14_RESEARCH.md` records a rejected 99%-active-session challenger.
+`docs/research/INTRADAY_V14_RESEARCH.md` records a rejected 99%-active-session challenger.
 Its best zero-cost IEX variant was positive, but it became negative at only two
 basis points of slippage per side and was not promoted to paper.
-`INTRADAY_V15_RESEARCH.md` combines a confidence-scaled daily SPY opening-trend
+`docs/research/INTRADAY_V15_RESEARCH.md` combines a confidence-scaled daily SPY opening-trend
 sleeve with the selective V13 stock overlay. V15 is the current high-activity paper
 candidate; V13 remains its reproducible alpha control.
+
+## Documentation
+
+Detailed notes live under `docs/`:
+
+- `docs/research/` — research reports and version studies (Momentum V2-V4.1, the
+  intraday V1-V15 lineage, broad-universe, expanded robustness, forward shadow).
+- `docs/paper/` — paper-trading operations: the dual-account design, the Daily V4
+  and Intra V15 readiness records, and the daily pre-market review routine.
 
 ## What is included
 
@@ -198,7 +207,7 @@ that points this project at Alpaca live trading.
 Daily V4 uses 20-minute-delayed SIP data and explicitly excludes the current
 session's daily bar, allowing Monday orders to use Friday's completed SIP
 signal without a real-time SIP subscription. Launch its one-cycle Windows
-runner with `scripts/run-daily-v4-paper.ps1`; see `PAPER_DAILY_V4.md`.
+runner with `scripts/run-daily-v4-paper.ps1`; see `docs/paper/PAPER_DAILY_V4.md`.
 
 Install the Daily V4 and Intra V15 execution tasks plus the Daily V4 close
 reconciliation task with:
@@ -225,7 +234,7 @@ per-order implementation shortfall, fill rate, and missed orders to
 `artifacts/paper-intra-v15/implementation_shortfall.csv` so the cost-sensitive
 daily sleeve can be checked against its two-basis-point invalidation gate. Both
 the intraday and daily paper paths refuse to plan on a universe snapshot older
-than `max_universe_age_days`. See `PAPER_INTRADAY_V15.md` for the readiness record and
+than `max_universe_age_days`. See `docs/paper/PAPER_INTRADAY_V15.md` for the readiness record and
 operating checklist.
 
 ## Safety and research rules
@@ -262,11 +271,11 @@ distributed experiment scheduler, or a persistent paper daemon.
 
 The first Alpaca-data strategy study, including concentration, universe,
 transaction-cost, and rebalance-cadence stress tests, is documented in
-RESEARCH_REPORT.md. The main finding is that the original megacap results are
+docs/research/RESEARCH_REPORT.md. The main finding is that the original megacap results are
 concentrated in NVDA and META; 12-month sector-ETF momentum is the only
 candidate currently worth advancing to rolling walk-forward research.
 
-Momentum V2 is documented in MOMENTUM_V2.md. It adds 12-1 momentum, trend
+Momentum V2 is documented in docs/research/MOMENTUM_V2.md. It adds 12-1 momentum, trend
 confirmation, inverse-volatility weights, sector caps, an entry/exit rank
 buffer, daily paper performance tracking, and a persistent ten-session paper
 rebalance guard. The pilot configuration caps each paper order at USD 100.
@@ -284,7 +293,7 @@ proxy.
       --end 2026-07-16 `
       --output artifacts\research-expanded
 
-Read EXPANDED_RESEARCH.md before changing the paper allocation. The expanded
+Read docs/research/EXPANDED_RESEARCH.md before changing the paper allocation. The expanded
 evidence supports only a small paper pilot; it does not establish durable alpha.
 
 ## Broad point-in-time universe
@@ -294,7 +303,7 @@ assets, downloads SIP bars in resumable batches, constructs a monthly
 point-in-time top-liquidity universe, and handles missing-price exits with an
 explicit stress assumption. The completed study covers 6,329 candidate symbols
 and 1,092 stocks that entered the monthly top 500. See
-BROAD_UNIVERSE_RESEARCH.md for the results and limitations.
+docs/research/BROAD_UNIVERSE_RESEARCH.md for the results and limitations.
 
     .venv\Scripts\python.exe scripts\broad_universe_research.py `
       --top-n 500 `
@@ -306,7 +315,7 @@ Momentum V3 applies market-residual momentum, trend and downside-volatility
 scores, correlation-aware selection, 4% position caps, market-regime exposure,
 and a forecast-volatility ceiling to that broad universe. Its locked candidate
 did not beat V2 or SPY risk-adjusted, so paper submission remains disabled.
-See `MOMENTUM_V3_RESEARCH.md` and reproduce the study with:
+See `docs/research/MOMENTUM_V3_RESEARCH.md` and reproduce the study with:
 
     .venv\Scripts\python.exe scripts\broad_v3_research.py
 
@@ -315,7 +324,7 @@ SPY core is combined with a smaller, diversified residual-momentum sleeve.
 Training selected the 75% SPY / 25% active version. Its later diagnostic was
 modestly better than SPY after 10-basis-point slippage and remained ahead under
 25-basis-point stress, so it is approved for forward shadow observation only.
-Paper submission is disabled. See `MOMENTUM_V4_RESEARCH.md`.
+Paper submission is disabled. See `docs/research/MOMENTUM_V4_RESEARCH.md`.
 
     .venv\Scripts\python.exe scripts\broad_v4_research.py
     .venv\Scripts\python.exe scripts\broad_v4_cost_stress.py
@@ -331,7 +340,7 @@ snapshot after updating the broad-universe research data:
 
 V4.1 adds filing-dated SEC quality and earnings features, component ablation,
 benchmark-aware active weighting, and a separate 15%-cash defensive variant.
-See `MOMENTUM_V41_PROGRESS.md`. SEC downloads require a declared contact user
+See `docs/research/MOMENTUM_V41_PROGRESS.md`. SEC downloads require a declared contact user
 agent in `.env`:
 
     PROJECT_GELD_SEC_USER_AGENT=ProjectGeld your-email@example.com

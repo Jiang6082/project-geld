@@ -6,7 +6,7 @@ the Intra V15 implementation-shortfall + kill-switch reading. It reads local log
 files only -- no live API calls, no orders, nothing that can touch a broker.
 
 Run pre-market (a scheduled task can do this automatically); then, in a Claude
-session, layer the market-posture / discipline skills on top (see DAILY_REVIEW.md).
+session, layer the market-posture / discipline skills on top (see docs/paper/DAILY_REVIEW.md).
 """
 
 from __future__ import annotations

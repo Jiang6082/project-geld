@@ -22,7 +22,7 @@ name = "daily_v4"
 # climbs from ~1.7x (75/25) to ~4.2x (40/60) to ~5.2x (25/75). 75/25 therefore
 # captures the maximum backtested PnL at the lowest turnover, which matters most
 # given this strategy's documented cost sensitivity. This also matches the
-# pre-registered MOMENTUM_V4 selection. See PAPER_DAILY_V4.md.
+# pre-registered MOMENTUM_V4 selection. See docs/paper/PAPER_DAILY_V4.md.
 [strategy.parameters]
 core_symbol = "SPY"
 core_weight = 0.75
