@@ -57,6 +57,14 @@ def test_load_crsp_daily_normalizes_prices_and_adjustment():
     assert aaa.iloc[0]["timestamp"].tz_convert("America/New_York").date().isoformat() == "2001-01-02"
 
 
+def test_load_crsp_daily_is_case_insensitive_on_columns():
+    # WRDS exports are frequently lowercase; the loader must still resolve them.
+    raw = _sample_crsp().rename(columns=str.lower)
+    bars = load_crsp_daily(raw)
+    assert not bars.empty
+    assert set(bars["symbol"]) == {"AAA", "BBB"}
+
+
 def test_monthly_pit_universe_builds_membership():
     bars = load_crsp_daily(_sample_crsp())
     membership = monthly_pit_universe(

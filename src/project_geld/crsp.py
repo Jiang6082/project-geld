@@ -56,7 +56,13 @@ def load_crsp_daily(
 ) -> pd.DataFrame:
     """Normalize a raw CRSP daily frame into engine bars (adjusted OHLCV)."""
     config = config or CrspIngestConfig()
-    cols = config.columns
+    # Resolve configured column names against the export case-insensitively, so a
+    # WRDS export using lowercase (permno, prc, ...) works without reconfiguration.
+    lower_map = {str(c).lower(): c for c in frame.columns}
+    cols = {
+        key: lower_map.get(str(name).lower(), name)
+        for key, name in config.columns.items()
+    }
     required = [cols["permno"], cols["date"], cols["price"]]
     missing = [name for name in required if name not in frame.columns]
     if missing:
