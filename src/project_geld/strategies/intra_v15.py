@@ -44,6 +44,11 @@ class IntraV15(IntraV13):
     # summed path from the open to the signal bar) to be at least this value,
     # so the opening-trend sleeve sits out choppy sessions. None disables it.
     base_min_efficiency_ratio: float | None = None
+    # Optional additional intraday re-assessment times (local HH:MM). When set,
+    # the base sleeve re-reads the opening-trend signal (same sizing + chop gate)
+    # at each of these times and adjusts the position, instead of only acting once
+    # at base_signal_time. None keeps the single-signal behavior.
+    base_signal_times: list[str] | None = None
     base_weight: float | None = None
     name: str = "intra_v15"
     version: str = "Intra V15.0.6"
@@ -82,6 +87,9 @@ class IntraV15(IntraV13):
             raise ValueError("base_signal_time must precede base_flatten_at.")
         if _clock(self.base_flatten_at) > _clock(self.flatten_at):
             raise ValueError("base_flatten_at cannot follow overlay flatten_at.")
+        for extra in self.base_signal_times or []:
+            if _clock(extra) >= _clock(self.base_flatten_at):
+                raise ValueError("every base_signal_times entry must precede base_flatten_at.")
 
     def generate_targets(self, bars: pd.DataFrame) -> pd.DataFrame:
         overlay = super().generate_targets(bars)
@@ -106,6 +114,9 @@ class IntraV15(IntraV13):
             path = core_close.groupby(sessions).diff().abs().groupby(sessions).cumsum()
             efficiency = core_close.sub(first_open).abs().div(path.replace(0.0, np.nan))
 
+        signal_clocks = {
+            _clock(t) for t in (self.base_signal_times or [self.base_signal_time])
+        }
         records: list[dict] = []
         for _, session_index in close.groupby(sessions).groups.items():
             direction = 0.0
@@ -114,7 +125,7 @@ class IntraV15(IntraV13):
                     tzinfo=None
                 )
                 score = opening_return.at[timestamp]
-                if local_time == _clock(self.base_signal_time) and pd.notna(score):
+                if local_time in signal_clocks and pd.notna(score):
                     ratio = None if efficiency is None else efficiency.at[timestamp]
                     choppy = efficiency is not None and (
                         pd.isna(ratio) or ratio < self.base_min_efficiency_ratio

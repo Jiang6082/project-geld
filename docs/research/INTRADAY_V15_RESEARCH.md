@@ -49,3 +49,21 @@ registered and reproducible as the selective control. Paper review must track
 SPY decision price, limit price, fill price, fill rate, and missed orders; an
 average implementation shortfall above two basis points invalidates the daily
 base sleeve.
+
+## Evaluated and not adopted: multiple intraday entries
+
+`IntraV15` supports an optional `base_signal_times` list that re-reads the
+opening-trend signal (same sizing + chop gate) at additional intraday times, but
+it is left off. Adding midday/afternoon re-assessments made the exact IEX
+reproduction worse, not better:
+
+| Base signal times | Total | Sharpe | Validation | Turnover |
+|---|---:|---:|---:|---:|
+| 10:30 only (current) | 3.89% | 1.00 | +0.36% | 16.2x |
+| 10:30, 13:00 | 2.55% | 0.70 | -0.26% | 17.2x |
+| 10:30, 13:00, 14:30 | 2.51% | 0.69 | -0.04% | 18.4x |
+
+The extra entries add spread cost and afternoon noise, cut total return and
+Sharpe, and flip the out-of-sample validation window negative. Consistent with
+the broader finding that this sleeve is cost-fragile and more trading erodes it,
+the single 10:30 signal is retained.
