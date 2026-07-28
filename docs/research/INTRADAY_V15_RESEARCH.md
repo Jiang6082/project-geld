@@ -50,6 +50,24 @@ SPY decision price, limit price, fill price, fill rate, and missed orders; an
 average implementation shortfall above two basis points invalidates the daily
 base sleeve.
 
+## Evaluated and not adopted: alternative single signal times
+
+Beyond the 09:45-11:00 screen (which selected 10:30), each later single signal
+time was re-run in isolation on the exact IEX panel. 10:30 dominates and is the
+only time with a positive out-of-sample validation window:
+
+| Single signal time | Total | Sharpe | Validation |
+|---|---:|---:|---:|
+| 10:30 (current) | 3.89% | 1.00 | +0.36% |
+| 11:00 | 2.43% | 0.67 | -0.33% |
+| 12:00 | 2.46% | 0.72 | -0.42% |
+| 13:00 | 2.45% | 0.73 | -0.57% |
+| 14:00 | 2.60% | 0.80 | -0.54% |
+
+The signal is an opening-trend read; it carries information shortly after the
+open but decays by midday, and later entries also leave a shorter hold-to-flatten
+window. 10:30 is retained.
+
 ## Evaluated and not adopted: multiple intraday entries
 
 `IntraV15` supports an optional `base_signal_times` list that re-reads the
