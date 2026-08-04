@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pandas as pd
 
+from project_geld.atomicio import atomic_write_text
 from project_geld.credentials import load_alpaca_credentials
 
 
@@ -165,8 +166,7 @@ def run_shadow_cycle(
     }
     state = {"last_bar": latest_time.isoformat(), "pending_signal": latest_time.isoformat(),
         "pending_targets": next_pending, "positions": positions}
-    state_path.parent.mkdir(parents=True, exist_ok=True)
-    state_path.write_text(json.dumps(state, indent=2, sort_keys=True), encoding="utf-8")
+    atomic_write_text(state_path, json.dumps(state, indent=2, sort_keys=True))
     frame = pd.DataFrame(events, columns=EVENT_COLUMNS)
     if len(frame):
         event_path.parent.mkdir(parents=True, exist_ok=True)

@@ -1,0 +1,38 @@
+{
+  "bundle_schema_version": "candidate_bundle_v1",
+  "candidate_id": "momentum_20",
+  "name": "momentum_20",
+  "source_project_version": "emberforge 0.1.0",
+  "signal_spec": {
+    "kind": "expression",
+    "expression": "ts_returns(close,20)",
+    "parameters": { "expected_sign": 1 }
+  },
+  "economic_hypothesis": "Recent winners keep winning over horizon 20.",
+  "required_inputs": ["close"],
+  "frequency": "1Day",
+  "lookback": 20,
+  "universe_assumptions": ["SYM00", "SYM01", "SYM02", "SYM03", "SYM04"],
+  "preprocessing": { "cross_sectional_zscore": true, "winsorize": true },
+  "portfolio_construction": {
+    "kind": "cross_sectional_quantile",
+    "quantiles": 5,
+    "long_quantile": "top",
+    "short_quantile": "bottom",
+    "weighting": "equal",
+    "gross_exposure": 1.0,
+    "neutralize": false,
+    "rebalance": "daily"
+  },
+  "evaluation_summary": {
+    "deflated_sharpe": 0.95,
+    "portfolio_backtest_sharpe": 2.44,
+    "max_drawdown": -0.12,
+    "emberforge_approval_state": "auto_approved",
+    "note": "Evaluated on synthetic data in Emberforge; must be re-validated on real markets in Geld."
+  },
+  "data_fingerprint": "125968046f689a2d",
+  "code_hash": "125968046f689a2d",
+  "approval_status": "approved",
+  "created_at": "2026-08-04T00:46:15Z"
+}

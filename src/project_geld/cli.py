@@ -14,6 +14,7 @@ from project_geld.close_check import (
 )
 from project_geld.backtest import run_backtest, save_result
 from project_geld.config import AppConfig, load_config, validate_config
+from project_geld import provenance
 from project_geld.data import (
     AlpacaBarSource,
     CachedBarSource,
@@ -167,6 +168,32 @@ def command_experiment(args) -> None:
     print(f"Experiment: {Path(args.output).resolve()}")
 
 
+def _emit_run_manifest(config, output: Path, run_kind: str, run_mode: str, summary: dict) -> None:
+    """Additive provenance: write a run manifest + a JSONL record for a paper run.
+
+    Guarded so a provenance failure can never affect the trading command. Never
+    writes secrets — only public config metadata.
+    """
+    try:
+        run_id = provenance.make_run_id(run_kind)
+        manifest = provenance.new_manifest(run_id, run_kind, config, repo_dir=Path(__file__).resolve().parents[2])
+        manifest.run_mode = run_mode
+        provenance.finalize(manifest, "success", outputs=summary)
+        provenance.write_manifest(output / "manifests" / f"{run_id}.json", manifest)
+        record = {
+            "run_id": run_id,
+            "run_kind": run_kind,
+            "run_mode": run_mode,
+            "config_fingerprint": manifest.config_fingerprint,
+            "git_commit": manifest.git.get("commit"),
+            "completed_at": manifest.completed_at,
+            **summary,
+        }
+        provenance.append_jsonl(output / "run_log.jsonl", record)
+    except Exception as exc:  # pragma: no cover - provenance must never break a run
+        print(f"[provenance] warning: could not write run manifest: {exc}")
+
+
 def command_paper(args) -> None:
     config = load_config(args.config)
     validate_config(config)
@@ -240,6 +267,18 @@ def command_paper(args) -> None:
     print(result.message)
     if len(result.orders):
         print(result.orders.to_string(index=False))
+    _emit_run_manifest(
+        config, output, "paper_cycle",
+        "submission" if submit else "planning-only",
+        {
+            "equity": float(performance["equity"]),
+            "cumulative_return": float(performance["cumulative_return"]),
+            "rebalance_due": bool(due),
+            "sessions_elapsed": int(elapsed),
+            "planned_orders": int(len(result.orders)),
+            "submitted": bool(submit),
+        },
+    )
 
 
 def command_paper_status(args) -> None:
@@ -598,6 +637,17 @@ def command_intraday_paper(args) -> None:
     print(result.message)
     if len(result.orders):
         print(result.orders.to_string(index=False))
+    _emit_run_manifest(
+        config, output, "intraday_paper_cycle",
+        "submission" if submit else "planning-only",
+        {
+            "equity": float(performance["equity"]),
+            "latest_bar": str(latest_bar),
+            "cycle_due": bool(due),
+            "planned_orders": int(len(result.orders)),
+            "submitted": bool(submit),
+        },
+    )
 
 
 def command_intraday_shadow(args) -> None:
@@ -637,6 +687,31 @@ def command_intraday_shadow(args) -> None:
     print(f"Shadow cycle {latest_time}: {len(events)} event(s); zero orders submitted.")
     if len(events):
         print(events.to_string(index=False))
+
+
+def command_validate_candidate(args) -> None:
+    from project_geld.candidates.validator import load_bundle, validate_bundle
+
+    result = validate_bundle(load_bundle(args.bundle))
+    print(f"Candidate: {result.candidate_id}")
+    print(f"Valid: {'yes' if result.ok else 'no'}")
+    for error in result.errors:
+        print(f"  [error] {error}")
+    for warning in result.warnings:
+        print(f"  [warn]  {warning}")
+    print(
+        "\nValidation does NOT import or enable anything. Use 'import-candidate' to place "
+        "an approved bundle into research-only quarantine."
+    )
+    if not result.ok:
+        raise ValueError("Candidate bundle failed validation.")
+
+
+def command_import_candidate(args) -> None:
+    from project_geld.candidates.importer import import_bundle
+
+    target = import_bundle(args.bundle, quarantine_dir=args.quarantine_dir)
+    print(f"Quarantined (research-only, paper NOT enabled): {target}")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -706,6 +781,19 @@ def build_parser() -> argparse.ArgumentParser:
     intraday_shadow = subparsers.add_parser("intraday-shadow-once")
     intraday_shadow.add_argument("--output", default="artifacts/intraday-shadow")
     intraday_shadow.set_defaults(func=command_intraday_shadow)
+
+    validate_candidate = subparsers.add_parser(
+        "validate-candidate", help="Offline validation of an Emberforge candidate bundle (no import)."
+    )
+    validate_candidate.add_argument("--bundle", required=True, help="Path to a candidate_bundle_v1 JSON file.")
+    validate_candidate.set_defaults(func=command_validate_candidate)
+
+    import_candidate = subparsers.add_parser(
+        "import-candidate", help="Validate + quarantine a candidate bundle (research-only; never enables trading)."
+    )
+    import_candidate.add_argument("--bundle", required=True)
+    import_candidate.add_argument("--quarantine-dir", default="artifacts/candidates/quarantine")
+    import_candidate.set_defaults(func=command_import_candidate)
     return parser
 
 

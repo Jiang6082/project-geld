@@ -7,6 +7,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+from project_geld.atomicio import atomic_write_text
 from project_geld.backtest import run_backtest
 from project_geld.config import BacktestConfig, RiskConfig
 from project_geld.data import BAR_COLUMNS, normalize_bars
@@ -136,8 +137,7 @@ def intraday_cycle_due(state_file: Path, latest_bar: pd.Timestamp) -> bool:
 
 
 def mark_intraday_cycle(state_file: Path, latest_bar: pd.Timestamp) -> None:
-    state_file.parent.mkdir(parents=True, exist_ok=True)
-    state_file.write_text(
+    atomic_write_text(
+        state_file,
         json.dumps({"latest_bar": pd.Timestamp(latest_bar).isoformat()}, indent=2),
-        encoding="utf-8",
     )

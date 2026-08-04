@@ -9,6 +9,7 @@ import time
 from typing import Protocol
 
 import pandas as pd
+from project_geld.atomicio import atomic_write_dataframe_csv, atomic_write_text
 from project_geld.config import PaperConfig, RiskConfig
 from project_geld.credentials import load_alpaca_credentials
 from project_geld.models import OrderIntent, PaperCycleResult
@@ -81,7 +82,7 @@ def append_performance_snapshot(
     }
     history = pd.concat([history, pd.DataFrame([row])], ignore_index=True)
     history = history.sort_values("observed_at")
-    history.to_csv(output, index=False)
+    atomic_write_dataframe_csv(history, output, index=False)
     return pd.Series(row)
 
 
@@ -215,8 +216,8 @@ def paper_rebalance_due(
 def mark_paper_rebalance(
     paper: PaperConfig, strategy_name: str, session: pd.Timestamp
 ) -> None:
-    paper.state_file.parent.mkdir(parents=True, exist_ok=True)
-    paper.state_file.write_text(
+    atomic_write_text(
+        paper.state_file,
         json.dumps(
             {
                 "strategy": strategy_name,
@@ -224,7 +225,6 @@ def mark_paper_rebalance(
             },
             indent=2,
         ),
-        encoding="utf-8",
     )
 
 
