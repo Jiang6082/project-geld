@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from project_geld.strategies.base import Strategy
+from project_geld.strategies.candidate import CandidateStrategy
 from project_geld.strategies.daily_v4 import DailyV4
 from project_geld.strategies.equity_momentum_v2 import EquityMomentumV2
 from project_geld.strategies.equity_momentum_v3 import EquityMomentumV3
@@ -52,6 +53,7 @@ STRATEGIES = {
     "intra_v14": IntraV14,
     "intra_v15": IntraV15,
     "intraday_momentum": IntraV1,
+    "candidate": CandidateStrategy,
 }
 
 
