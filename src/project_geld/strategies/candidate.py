@@ -84,6 +84,11 @@ class CandidateStrategy:
     max_position_weight: float = 1.0
     long_short: bool = False
     preprocessing: Any = None
+    # Concrete, survivorship-aware tradeable universe the bundle's
+    # universe_assumptions was bound to. When set, the cross-sectional score is
+    # computed only over these symbols, so ranking is not polluted by names
+    # outside the bound universe. ``None`` ranks over every symbol with data.
+    universe: tuple[str, ...] | None = None
     candidate_id: str = "candidate"
     name: str = "candidate"
 
@@ -143,9 +148,26 @@ class CandidateStrategy:
         """Causal, preprocessed, sign-oriented cross-sectional score panel."""
         needed = self.required_fields
         panels = panels_from_bars(bars, needed=needed)
+        eligibility = self._combine_eligibility(panels, eligibility)
         score = compute_factor(self._node, panels, self._preprocess, eligibility)  # type: ignore[attr-defined]
         sign = -1.0 if self.expected_sign < 0 else 1.0
         return score * sign
+
+    def _combine_eligibility(
+        self, panels: dict[str, pd.DataFrame], eligibility: pd.DataFrame | None
+    ) -> pd.DataFrame | None:
+        """Restrict scoring to the bound universe (∩ any caller eligibility)."""
+        if self.universe is None:
+            return eligibility
+        ref = panels["close"] if "close" in panels else next(iter(panels.values()))
+        wanted = {s.upper() for s in self.universe}
+        mask = pd.DataFrame(
+            [[str(col).upper() in wanted for col in ref.columns]] * len(ref.index),
+            index=ref.index, columns=ref.columns,
+        )
+        if eligibility is not None:
+            mask = mask & eligibility.reindex(index=ref.index, columns=ref.columns).fillna(False)
+        return mask
 
     def generate_targets(
         self, bars: pd.DataFrame, eligibility: pd.DataFrame | None = None

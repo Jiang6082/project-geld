@@ -104,4 +104,33 @@ def bind_universe(
     return Binding(False, [], "none", "no bars available to bind a universe", requested)
 
 
-__all__ = ["Binding", "bind_universe"]
+def bind_strategy(
+    bundle: dict[str, Any],
+    bars: pd.DataFrame,
+    *,
+    benchmark: str = "SPY",
+    max_symbols: int | None = None,
+    config_symbols: list[str] | None = None,
+    **overrides: Any,
+):
+    """Build a CandidateStrategy bound to a concrete PIT universe.
+
+    Binds the bundle's ``universe_assumptions`` against ``bars`` and returns a
+    ``(strategy, binding)`` pair whose scoring is restricted to the bound,
+    survivorship-aware symbols. Raises ``ValueError`` if the universe cannot be
+    bound, so callers never evaluate on an empty or synthetic universe.
+    """
+    from project_geld.strategies.candidate import CandidateStrategy
+
+    binding = bind_universe(
+        bundle, bars, benchmark=benchmark, max_symbols=max_symbols, config_symbols=config_symbols
+    )
+    if not binding.ok:
+        raise ValueError(f"cannot bind universe: {binding.reason}")
+    strategy = CandidateStrategy.from_bundle(
+        bundle, universe=tuple(binding.symbols), **overrides
+    )
+    return strategy, binding
+
+
+__all__ = ["Binding", "bind_universe", "bind_strategy"]

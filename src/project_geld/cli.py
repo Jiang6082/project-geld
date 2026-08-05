@@ -733,15 +733,13 @@ def command_revalidate_candidate(args) -> None:
     from project_geld.candidates import state as candidate_state
     from project_geld.candidates.promotion import GatePolicy, revalidate_candidate
     from project_geld.candidates.state import load_record
-    from project_geld.candidates.universe import bind_universe
+    from project_geld.candidates.universe import bind_strategy
     from project_geld.data import normalize_bars
-    from project_geld.strategies.candidate import strategy_from_quarantine
 
     config = load_config(args.config)
     validate_config(config)
     record = load_record(args.bundle)
     bundle = record.get("bundle", record)
-    strategy = strategy_from_quarantine(record)
 
     bars = normalize_bars(pd.read_csv(args.bars))
     if args.start:
@@ -750,9 +748,12 @@ def command_revalidate_candidate(args) -> None:
         bars = bars[bars["timestamp"] <= _date(args.end, bars["timestamp"].max())]
     benchmark = config.universe.benchmark.upper()
 
-    binding = bind_universe(bundle, bars, benchmark=benchmark, max_symbols=args.max_symbols)
-    if not binding.ok:
-        raise RuntimeError(f"Universe binding failed: {binding.reason}")
+    # Bind universe_assumptions to a concrete PIT universe and build a strategy
+    # whose scoring is restricted to it (fails closed if it cannot be bound).
+    try:
+        strategy, binding = bind_strategy(bundle, bars, benchmark=benchmark, max_symbols=args.max_symbols)
+    except ValueError as exc:
+        raise RuntimeError(f"Universe binding failed: {exc}") from exc
     bars = bars[bars["symbol"].isin(set(binding.symbols) | {benchmark})]
 
     policy = GatePolicy()
