@@ -168,16 +168,23 @@ def command_experiment(args) -> None:
     print(f"Experiment: {Path(args.output).resolve()}")
 
 
-def _emit_run_manifest(config, output: Path, run_kind: str, run_mode: str, summary: dict) -> None:
-    """Additive provenance: write a run manifest + a JSONL record for a paper run.
+def _emit_run_manifest(
+    config, output: Path, run_kind: str, run_mode: str, summary: dict,
+    candidate: dict | None = None,
+) -> None:
+    """Additive provenance: write a run manifest + a JSONL record for a run.
 
     Guarded so a provenance failure can never affect the trading command. Never
-    writes secrets — only public config metadata.
+    writes secrets — only public config metadata. When ``candidate`` lineage is
+    supplied (an Emberforge candidate-driven run), it is recorded on the manifest
+    and in the JSONL record so the run traces back across the project boundary.
     """
     try:
         run_id = provenance.make_run_id(run_kind)
         manifest = provenance.new_manifest(run_id, run_kind, config, repo_dir=Path(__file__).resolve().parents[2])
         manifest.run_mode = run_mode
+        if candidate:
+            manifest.candidate = candidate
         provenance.finalize(manifest, "success", outputs=summary)
         provenance.write_manifest(output / "manifests" / f"{run_id}.json", manifest)
         record = {
@@ -187,6 +194,7 @@ def _emit_run_manifest(config, output: Path, run_kind: str, run_mode: str, summa
             "config_fingerprint": manifest.config_fingerprint,
             "git_commit": manifest.git.get("commit"),
             "completed_at": manifest.completed_at,
+            **({"candidate": candidate} if candidate else {}),
             **summary,
         }
         provenance.append_jsonl(output / "run_log.jsonl", record)
@@ -773,6 +781,20 @@ def command_revalidate_candidate(args) -> None:
         flag = "PASS" if gate["passed"] else "FAIL"
         print(f"  [{flag}] {gate['name']}: value={gate['value']} threshold={gate['threshold']}")
     print(f"Verdict written: {verdict_path.resolve()}")
+
+    # Cross-boundary provenance: this run is driven by an Emberforge candidate.
+    lineage = provenance.candidate_lineage(bundle)
+    _emit_run_manifest(
+        config, output, "candidate-revalidation", "backtest",
+        summary={
+            "verdict": verdict["verdict"],
+            "test_sharpe": verdict["segments"]["test"].get("sharpe"),
+            "test_return": verdict["segments"]["test"].get("total_return"),
+            "annual_turnover": verdict["annual_turnover"],
+            "verdict_path": str(verdict_path),
+        },
+        candidate=lineage,
+    )
 
     if args.advance_state and "state" in record:
         evidence = {"verdict_path": str(verdict_path), "gates": verdict["reasons"]}

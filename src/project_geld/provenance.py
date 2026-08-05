@@ -106,9 +106,37 @@ class RunManifest:
     git: dict[str, Any] = field(default_factory=dict)
     outputs: dict[str, Any] = field(default_factory=dict)
     notes: list[str] = field(default_factory=list)
+    # Cross-project lineage for Emberforge candidate-driven runs. Empty for
+    # ordinary Geld runs; populated from the imported bundle so a candidate run
+    # can be traced back to the exact discovered factor it came from.
+    candidate: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
+
+
+def candidate_lineage(bundle: dict[str, Any]) -> dict[str, Any]:
+    """Extract cross-boundary lineage fields from an Emberforge candidate bundle.
+
+    Records who the candidate is (``candidate_id``), which upstream project +
+    version produced it (``source_project_version``), the signal fingerprint
+    (``code_hash``), and the dataset it was discovered on
+    (``data_fingerprint``) — plus the declarative expression and Emberforge's own
+    approval state for a complete audit trail. All values are declarative data;
+    nothing here is executed.
+    """
+    signal = bundle.get("signal_spec") or {}
+    summary = bundle.get("evaluation_summary") or {}
+    return {
+        "candidate_id": bundle.get("candidate_id"),
+        "source_project_version": bundle.get("source_project_version"),
+        "code_hash": bundle.get("code_hash", ""),
+        "data_fingerprint": bundle.get("data_fingerprint", ""),
+        "bundle_schema_version": bundle.get("bundle_schema_version"),
+        "expression": signal.get("expression") if isinstance(signal, dict) else None,
+        "emberforge_approval_state": summary.get("emberforge_approval_state")
+        or bundle.get("approval_status"),
+    }
 
 
 def new_manifest(run_id: str, run_kind: str, config: Any | None = None, *, repo_dir: str | Path | None = None) -> RunManifest:
