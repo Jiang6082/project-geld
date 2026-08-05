@@ -814,6 +814,107 @@ def command_revalidate_candidate(args) -> None:
             print(f"[state] not advanced: {exc}")
 
 
+def command_revalidate_batch(args) -> None:
+    """Batch OOS re-validation with Benjamini-Hochberg FDR across candidates.
+
+    Loads every quarantined record in a directory, re-validates each on the same
+    OOS bars, and promotes only those passing per-candidate gates AND surviving
+    batch-level FDR. No parameter search.
+    """
+    from project_geld.candidates import state as candidate_state
+    from project_geld.candidates.batch import revalidate_batch
+    from project_geld.candidates.state import load_record
+    from project_geld.data import normalize_bars
+
+    config = load_config(args.config)
+    validate_config(config)
+    records: dict[str, dict] = {}
+    for path in sorted(Path(args.quarantine_dir).glob("*.json")):
+        rec = load_record(path)
+        bundle = rec.get("bundle", rec)
+        cid = bundle.get("candidate_id") or path.stem
+        records[cid] = {"path": path, "record": rec, "bundle": bundle}
+    if not records:
+        raise RuntimeError(f"No quarantined candidates found in {args.quarantine_dir}")
+
+    bars = normalize_bars(pd.read_csv(args.bars))
+    if args.start:
+        bars = bars[bars["timestamp"] >= _date(args.start, bars["timestamp"].min())]
+    if args.end:
+        bars = bars[bars["timestamp"] <= _date(args.end, bars["timestamp"].max())]
+    benchmark = config.universe.benchmark.upper()
+
+    batch = revalidate_batch(
+        [r["bundle"] for r in records.values()], bars,
+        backtest=config.backtest, risk=config.risk, benchmark=benchmark,
+        fdr_q=args.fdr_q, max_symbols=args.max_symbols,
+    )
+
+    output = Path(args.output)
+    output.mkdir(parents=True, exist_ok=True)
+    (output / "batch.verdict.json").write_text(
+        json.dumps(batch, indent=2, sort_keys=True, default=str), encoding="utf-8"
+    )
+    print(f"Candidates: {batch['n_candidates']}  gate-pass: {batch['n_gate_pass']}  "
+          f"promoted (survive FDR q={batch['fdr_q']}): {batch['n_promoted']}")
+    for r in batch["candidates"]:
+        print(f"  [{r['verdict'].upper():17}] {r['candidate_id']}: "
+              f"sharpe={r.get('test_sharpe')} p={round(r['p_value'], 4)} "
+              f"gates={'ok' if r['gates_passed'] else r.get('reasons')}")
+    print(f"Batch verdict written: {(output / 'batch.verdict.json').resolve()}")
+
+    if args.advance_state:
+        for r in batch["candidates"]:
+            entry = records.get(r["candidate_id"])
+            if entry is None or "state" not in entry["record"]:
+                continue
+            target = "shadow" if r["verdict"] == "promote_to_shadow" else "rejected"
+            try:
+                candidate_state.advance_file(entry["path"], "validated_oos",
+                                             reason="Batch OOS re-validation completed.")
+                candidate_state.advance_file(entry["path"], target,
+                                             reason=f"Batch FDR verdict -> {r['verdict']}.")
+            except candidate_state.StateError as exc:
+                print(f"[state] {r['candidate_id']} not advanced: {exc}")
+
+
+def command_candidate_shadow(args) -> None:
+    """Append an offline shadow snapshot for a shadow-state candidate (no orders)."""
+    from project_geld.candidates.shadow import run_candidate_shadow
+    from project_geld.candidates.state import load_record
+    from project_geld.candidates.universe import bind_strategy
+    from project_geld.data import normalize_bars
+
+    config = load_config(args.config)
+    validate_config(config)
+    record = load_record(args.bundle)
+    bundle = record.get("bundle", record)
+    if record.get("state") != "shadow":
+        raise RuntimeError(
+            f"Candidate is in state {record.get('state')!r}, not 'shadow'. Run "
+            "revalidate-candidate --advance-state until it reaches shadow first."
+        )
+
+    bars = normalize_bars(pd.read_csv(args.bars))
+    benchmark = config.universe.benchmark.upper()
+    strategy, binding = bind_strategy(bundle, bars, benchmark=benchmark, max_symbols=args.max_symbols)
+    bars = bars[bars["symbol"].isin(set(binding.symbols) | {benchmark})]
+
+    output = Path(args.output)
+    output.mkdir(parents=True, exist_ok=True)
+    snapshot = run_candidate_shadow(
+        strategy, bars, backtest=config.backtest, risk=config.risk, benchmark=benchmark,
+        tradable_symbols=binding.symbols, context_symbols=[benchmark],
+        ledger_path=output / "shadow_ledger.jsonl",
+        candidate_id=bundle.get("candidate_id"),
+    )
+    print(f"Shadow snapshot (research-only, NO orders): {snapshot['candidate_id']}")
+    print(f"  as_of={snapshot['as_of_bar']} positions={snapshot['n_positions']} "
+          f"gross={snapshot['gross_weight']} return={snapshot['total_return']:.2%} "
+          f"sharpe={snapshot['sharpe']:.2f}")
+    print(f"  ledger: {(output / 'shadow_ledger.jsonl').resolve()}")
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="geld", description="Project Geld research and Alpaca paper engine")
     parser.add_argument("--config", default="config.example.toml")
@@ -910,6 +1011,30 @@ def build_parser() -> argparse.ArgumentParser:
                             help="Persist the state transition (validated_oos -> shadow/rejected).")
     revalidate.add_argument("--output", default="artifacts/candidates/verdicts")
     revalidate.set_defaults(func=command_revalidate_candidate)
+
+    revalidate_batch = subparsers.add_parser(
+        "revalidate-batch",
+        help="Batch OOS re-validation with FDR across candidates (guards against lucky passes).",
+    )
+    revalidate_batch.add_argument("--quarantine-dir", default="artifacts/candidates/quarantine")
+    revalidate_batch.add_argument("--bars", default="artifacts/research-broad/selected-bars.csv.gz")
+    revalidate_batch.add_argument("--start")
+    revalidate_batch.add_argument("--end")
+    revalidate_batch.add_argument("--fdr-q", type=float, default=0.10, help="Benjamini-Hochberg FDR level.")
+    revalidate_batch.add_argument("--max-symbols", type=int, default=None)
+    revalidate_batch.add_argument("--advance-state", action="store_true")
+    revalidate_batch.add_argument("--output", default="artifacts/candidates/verdicts")
+    revalidate_batch.set_defaults(func=command_revalidate_batch)
+
+    candidate_shadow = subparsers.add_parser(
+        "candidate-shadow-once",
+        help="Append an offline shadow snapshot for a shadow-state candidate (no orders).",
+    )
+    candidate_shadow.add_argument("--bundle", required=True, help="Quarantined record JSON (state must be 'shadow').")
+    candidate_shadow.add_argument("--bars", default="artifacts/research-broad/selected-bars.csv.gz")
+    candidate_shadow.add_argument("--max-symbols", type=int, default=None)
+    candidate_shadow.add_argument("--output", default="artifacts/candidates/shadow")
+    candidate_shadow.set_defaults(func=command_candidate_shadow)
     return parser
 
 

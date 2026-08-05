@@ -21,8 +21,9 @@ from project_geld.strategies.candidate import CandidateStrategy
 # --------------------------------------------------------------------------
 # gate logic (pure)
 # --------------------------------------------------------------------------
-def _m(total_return=0.2, sharpe=1.0, max_drawdown=-0.1):
-    return {"total_return": total_return, "sharpe": sharpe, "max_drawdown": max_drawdown}
+def _m(total_return=0.2, sharpe=1.0, max_drawdown=-0.1, annual_alpha=0.1, beta=0.2):
+    return {"total_return": total_return, "sharpe": sharpe, "max_drawdown": max_drawdown,
+            "annual_alpha": annual_alpha, "beta": beta}
 
 
 def test_all_gates_pass():
@@ -60,6 +61,17 @@ def test_turnover_capacity_gate():
         annual_turnover=999.0, policy=GatePolicy(),
     )
     assert not next(g for g in gates if g.name == "turnover_capacity").passed
+
+
+def test_alpha_and_beta_gates_reject_pure_market_beta():
+    # positive return but no alpha and high beta -> closet-index exposure.
+    gates = evaluate_gates(
+        test=_m(total_return=0.4, sharpe=1.2, annual_alpha=-0.01, beta=1.8),
+        val=_m(), test_stressed=_m(), annual_turnover=10.0, policy=GatePolicy(),
+    )
+    failed = {g.name for g in gates if not g.passed}
+    assert "oos_alpha" in failed
+    assert "beta_sanity" in failed
 
 
 # --------------------------------------------------------------------------

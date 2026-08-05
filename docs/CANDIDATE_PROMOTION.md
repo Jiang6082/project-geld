@@ -36,11 +36,26 @@ Sessions are ordered and split by fraction (defaults `train=0.6`, `val=0.2`,
 | `stability` | `min(val, test)` Sharpe ≥ `0.0` | sign consistency across splits (not one lucky window) |
 | `max_drawdown` | test max drawdown ≥ `-0.35` | tolerable holdout drawdown |
 | `turnover_capacity` | full-period annual turnover ≤ `50.0` | capacity / cost-sensitivity proxy |
+| `oos_alpha` | test annualized alpha > `0.0` | edge is real, not just market beta |
+| `beta_sanity` | \|test beta\| ≤ `1.5` | not closet-index / leveraged-beta exposure |
 | `cost_stress` | test total return > `0.0` at `15 bps` slippage | edge survives higher costs |
 
 Thresholds live in `GatePolicy` and are intentionally **modest** — the gates
 exist to filter out candidates that don't survive independent confirmation, not
 to re-rank the survivors.
+
+## Multiple-testing control (batch re-validation)
+
+Per-candidate gates are necessary but not sufficient: run enough candidates and
+one clears the holdout-Sharpe gate by chance. When several candidates are
+re-validated together (`revalidate-batch`, `project_geld.candidates.batch`), Geld
+applies a **family-wise correction**: each candidate's holdout Sharpe becomes a
+one-sided p-value (`t = SR/√ppy · √n`), and a **Benjamini-Hochberg FDR**
+procedure at level `q` (default `0.10`) decides which survive. A candidate is
+promoted only if it **passes its own gates AND survives batch FDR**. This is
+deliberately stricter than judging candidates in isolation — a p-value that looks
+significant alone is rejected once it competes in a large family. No parameter
+search is performed at any stage.
 
 ## Verdict
 

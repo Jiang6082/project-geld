@@ -87,6 +87,33 @@ provenance run manifest recording the cross-boundary lineage (`candidate_id`,
 
 Use `--max-symbols N` / `--start` / `--end` for a faster bounded run.
 
+### Re-validating many candidates at once (multiple-testing control)
+
+Judging candidates one at a time lets false positives through — run enough and
+one clears the Sharpe gate by luck. `revalidate-batch` re-validates every
+quarantined candidate together and applies a Benjamini-Hochberg FDR correction
+across the batch; only candidates that pass their own gates **and** survive FDR
+are promoted:
+
+```bash
+python -m project_geld.cli revalidate-batch \
+  --quarantine-dir artifacts/candidates/quarantine \
+  --bars artifacts/research-broad/selected-bars.csv.gz \
+  --fdr-q 0.10 --advance-state
+```
+
+### Shadow tracking (no orders)
+
+Once a candidate is in `shadow` state, build a forward, paper-free track record
+by appending an offline snapshot each session (target allocation + hypothetical
+equity; nothing is submitted, `paper_enabled` stays off):
+
+```bash
+python -m project_geld.cli candidate-shadow-once \
+  --bundle artifacts/candidates/quarantine/<id>.json \
+  --bars artifacts/research-broad/selected-bars.csv.gz
+```
+
 ## 4. Universe binding
 
 `universe_assumptions` is mapped to a real tradeable set

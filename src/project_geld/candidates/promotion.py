@@ -46,6 +46,8 @@ class GatePolicy:
     max_annual_turnover: float = 50.0     # capacity proxy (full-period turnover)
     require_stressed_positive: bool = True  # still net-positive under cost stress
     stress_slippage_bps: float = 15.0     # slippage used for the stress pass
+    min_test_alpha: float = 0.0           # annualized alpha vs benchmark on holdout
+    max_abs_beta: float = 1.50            # reject closet-index / leveraged-beta exposure
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -112,6 +114,18 @@ def evaluate_gates(
         round(annual_turnover, 3), policy.max_annual_turnover,
         "full-period annual turnover (capacity proxy)",
     ))
+    test_alpha = float(test.get("annual_alpha", 0.0))
+    gates.append(Gate(
+        "oos_alpha", test_alpha > policy.min_test_alpha,
+        round(test_alpha, 6), policy.min_test_alpha,
+        "holdout alpha net of benchmark — edge is not just market beta",
+    ))
+    test_beta = float(test.get("beta", 0.0))
+    gates.append(Gate(
+        "beta_sanity", abs(test_beta) <= policy.max_abs_beta,
+        round(test_beta, 4), policy.max_abs_beta,
+        "holdout beta within bounds — not closet-index / leveraged-beta exposure",
+    ))
     if policy.require_stressed_positive and test_stressed is not None:
         gates.append(Gate(
             "cost_stress", test_stressed["total_return"] > 0.0,
@@ -147,6 +161,10 @@ def revalidate_candidate(
         bars, strategy, backtest, risk, benchmark, tradable_symbols, context_symbols
     )
     seg = {name: _period_metrics(baseline, start, end) for name, (start, end) in splits.items()}
+    n_obs = {
+        name: int(baseline.equity["timestamp"].between(start, end, inclusive="both").sum())
+        for name, (start, end) in splits.items()
+    }
 
     test_stressed_metrics = None
     if policy.require_stressed_positive:
@@ -170,9 +188,9 @@ def revalidate_candidate(
         "reasons": [g.name for g in gates if not g.passed] or ["all gates passed"],
         "gates": [g.to_dict() for g in gates],
         "segments": {
-            "train": _segment_summary(splits["train"], seg["train"]),
-            "val": _segment_summary(splits["val"], seg["val"]),
-            "test": _segment_summary(splits["test"], seg["test"]),
+            "train": _segment_summary(splits["train"], seg["train"], n_obs["train"]),
+            "val": _segment_summary(splits["val"], seg["val"], n_obs["val"]),
+            "test": _segment_summary(splits["test"], seg["test"], n_obs["test"]),
         },
         "test_stressed": test_stressed_metrics,
         "annual_turnover": annual_turnover,
@@ -185,14 +203,17 @@ def revalidate_candidate(
     }
 
 
-def _segment_summary(window: tuple, metrics: dict[str, float]) -> dict[str, Any]:
+def _segment_summary(window: tuple, metrics: dict[str, float], n_obs: int = 0) -> dict[str, Any]:
     start, end = window
     return {
         "start": str(start),
         "end": str(end),
+        "n_obs": int(n_obs),
         "total_return": metrics.get("total_return"),
         "sharpe": metrics.get("sharpe"),
         "max_drawdown": metrics.get("max_drawdown"),
+        "annual_alpha": metrics.get("annual_alpha"),
+        "beta": metrics.get("beta"),
     }
 
 
