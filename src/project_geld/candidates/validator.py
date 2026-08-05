@@ -152,8 +152,13 @@ def validate_bundle(bundle: dict[str, Any]) -> ValidationResult:
 
     universe = bundle.get("universe_assumptions")
     if "universe_assumptions" in bundle:
-        if not isinstance(universe, (dict, list)):
-            errors.append("universe_assumptions must be an object or a list of symbols")
+        # Emberforge emits this as a structured object, a list of symbols, OR a
+        # bare label string (default "research-only"). All three are accepted;
+        # Geld binds the label to a concrete PIT universe at eval time.
+        if not isinstance(universe, (dict, list, str)):
+            errors.append("universe_assumptions must be an object, a list of symbols, or a label string")
+        elif isinstance(universe, str) and not universe.strip():
+            errors.append("universe_assumptions string must be non-empty")
         elif isinstance(universe, list) and not all(isinstance(x, str) for x in universe):
             errors.append("universe_assumptions list items must be symbol strings")
 

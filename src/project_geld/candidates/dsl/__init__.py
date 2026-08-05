@@ -9,6 +9,7 @@ signal that matches upstream numbers (pinned by a cross-check test). No
 
 from __future__ import annotations
 
+from .canonical import canonical_string, factor_hash
 from .causality import CausalityError, Limits, ValidationError, complexity_score, validate
 from .evaluator import (
     FieldPanels,
@@ -26,6 +27,7 @@ __all__ = [
     "parse", "ParseError",
     "Node", "Field", "Const", "Call", "RAW_FIELDS",
     "validate", "ValidationError", "CausalityError", "Limits", "complexity_score",
+    "canonical_string", "factor_hash",
     "evaluate", "compute_factor", "panels_from_bars", "required_fields",
     "PreprocessConfig", "FieldPanels", "FieldUnavailable",
 ]

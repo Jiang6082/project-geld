@@ -32,8 +32,8 @@
     "frequency": { "enum": ["1Min", "5Min", "15Min", "1Day"] },
     "lookback": { "type": "integer", "minimum": 1, "maximum": 5000 },
     "universe_assumptions": {
-      "type": ["object", "array"],
-      "description": "Either a structured object, or a list of the symbols the factor was evaluated on (as emitted by Emberforge).",
+      "type": ["object", "array", "string"],
+      "description": "A structured object, a list of the symbols the factor was evaluated on, or a bare label string such as \"research-only\" (as emitted by Emberforge). Geld binds a label to a concrete point-in-time universe at eval time.",
       "items": { "type": "string" }
     },
     "preprocessing": {
