@@ -714,6 +714,83 @@ def command_import_candidate(args) -> None:
     print(f"Quarantined (research-only, paper NOT enabled): {target}")
 
 
+def command_revalidate_candidate(args) -> None:
+    """Independent OOS re-validation of a quarantined candidate -> verdict.
+
+    Loads Geld's own point-in-time bars, runs the candidate strategy through the
+    backtester with a cost-stress pass, applies fixed promotion gates, writes a
+    machine-readable verdict, and (optionally) advances the candidate's state.
+    NO parameter search — independent confirmation only.
+    """
+    from project_geld.candidates import state as candidate_state
+    from project_geld.candidates.promotion import GatePolicy, revalidate_candidate
+    from project_geld.candidates.state import load_record
+    from project_geld.candidates.universe import bind_universe
+    from project_geld.data import normalize_bars
+    from project_geld.strategies.candidate import strategy_from_quarantine
+
+    config = load_config(args.config)
+    validate_config(config)
+    record = load_record(args.bundle)
+    bundle = record.get("bundle", record)
+    strategy = strategy_from_quarantine(record)
+
+    bars = normalize_bars(pd.read_csv(args.bars))
+    if args.start:
+        bars = bars[bars["timestamp"] >= _date(args.start, bars["timestamp"].min())]
+    if args.end:
+        bars = bars[bars["timestamp"] <= _date(args.end, bars["timestamp"].max())]
+    benchmark = config.universe.benchmark.upper()
+
+    binding = bind_universe(bundle, bars, benchmark=benchmark, max_symbols=args.max_symbols)
+    if not binding.ok:
+        raise RuntimeError(f"Universe binding failed: {binding.reason}")
+    bars = bars[bars["symbol"].isin(set(binding.symbols) | {benchmark})]
+
+    policy = GatePolicy()
+    verdict = revalidate_candidate(
+        strategy,
+        bars,
+        backtest=config.backtest,
+        risk=config.risk,
+        benchmark=benchmark,
+        tradable_symbols=binding.symbols,
+        context_symbols=[benchmark],
+        policy=policy,
+        candidate_id=bundle.get("candidate_id"),
+    )
+    verdict["universe_binding"] = binding.to_dict()
+
+    output = Path(args.output)
+    output.mkdir(parents=True, exist_ok=True)
+    safe_id = str(verdict["candidate_id"]).replace("/", "_").replace(":", "_")
+    verdict_path = output / f"{safe_id}.verdict.json"
+    verdict_path.write_text(json.dumps(verdict, indent=2, sort_keys=True, default=str), encoding="utf-8")
+
+    print(f"Candidate: {verdict['candidate_id']}")
+    print(f"Verdict:   {verdict['verdict'].upper()}")
+    for gate in verdict["gates"]:
+        flag = "PASS" if gate["passed"] else "FAIL"
+        print(f"  [{flag}] {gate['name']}: value={gate['value']} threshold={gate['threshold']}")
+    print(f"Verdict written: {verdict_path.resolve()}")
+
+    if args.advance_state and "state" in record:
+        evidence = {"verdict_path": str(verdict_path), "gates": verdict["reasons"]}
+        try:
+            candidate_state.advance_file(
+                args.bundle, "validated_oos",
+                reason="Completed Geld independent OOS re-validation.", evidence=evidence,
+            )
+            target = "shadow" if verdict["verdict"] == "promote_to_shadow" else "rejected"
+            candidate_state.advance_file(
+                args.bundle, target,
+                reason=f"OOS gates -> {verdict['verdict']}.", evidence=evidence,
+            )
+            print(f"State advanced -> {target} (paper still requires a manual step).")
+        except candidate_state.StateError as exc:
+            print(f"[state] not advanced: {exc}")
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="geld", description="Project Geld research and Alpaca paper engine")
     parser.add_argument("--config", default="config.example.toml")
@@ -794,6 +871,22 @@ def build_parser() -> argparse.ArgumentParser:
     import_candidate.add_argument("--bundle", required=True)
     import_candidate.add_argument("--quarantine-dir", default="artifacts/candidates/quarantine")
     import_candidate.set_defaults(func=command_import_candidate)
+
+    revalidate = subparsers.add_parser(
+        "revalidate-candidate",
+        help="Independent OOS re-validation of a quarantined candidate -> promote/reject verdict.",
+    )
+    revalidate.add_argument("--bundle", required=True, help="Quarantined record JSON (or a raw bundle).")
+    revalidate.add_argument("--bars", default="artifacts/research-broad/selected-bars.csv.gz",
+                            help="Point-in-time OOS bars (CSV/gz) for independent re-validation.")
+    revalidate.add_argument("--start")
+    revalidate.add_argument("--end")
+    revalidate.add_argument("--max-symbols", type=int, default=None,
+                            help="Cap the bound universe (most-liquid first) for a faster run.")
+    revalidate.add_argument("--advance-state", action="store_true",
+                            help="Persist the state transition (validated_oos -> shadow/rejected).")
+    revalidate.add_argument("--output", default="artifacts/candidates/verdicts")
+    revalidate.set_defaults(func=command_revalidate_candidate)
     return parser
 
 
