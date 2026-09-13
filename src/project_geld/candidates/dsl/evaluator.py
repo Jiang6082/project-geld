@@ -42,6 +42,15 @@ class PreprocessConfig:
     execution_lag: int = 0        # extra bars between signal and application
 
 
+    def __post_init__(self) -> None:
+        if not 0 <= self.min_coverage <= 1:
+            raise ValueError("min_coverage must be in [0, 1]")
+        if self.winsorize_p is not None and not 0 <= self.winsorize_p < 0.5:
+            raise ValueError("winsorize_p must be in [0, 0.5)")
+        if isinstance(self.execution_lag, bool) or not isinstance(self.execution_lag, int) or self.execution_lag < 0:
+            raise ValueError("execution_lag must be a non-negative integer")
+
+
 FieldPanels = dict[str, pd.DataFrame]
 
 
@@ -79,7 +88,7 @@ def panels_from_bars(bars: pd.DataFrame, needed: set[str] | None = None) -> Fiel
     return panels
 
 
-def evaluate(node: Node, panels: FieldPanels) -> pd.DataFrame:
+def evaluate(node: Node, panels: FieldPanels, eligibility: pd.DataFrame | None = None) -> pd.DataFrame:
     """Evaluate a raw expression tree into a score matrix (no preprocessing)."""
     if isinstance(node, Field):
         if node.name not in panels:
@@ -89,7 +98,10 @@ def evaluate(node: Node, panels: FieldPanels) -> pd.DataFrame:
         return node.value  # scalar; pandas broadcasts it in arithmetic ops
     assert isinstance(node, Call)
     spec = operators.get(node.op)
-    evaluated = [evaluate(a, panels) for a in node.args]
+    evaluated = [evaluate(a, panels, eligibility) for a in node.args]
+    if spec.kind == "cs" and eligibility is not None:
+        evaluated = [a.where(eligibility.reindex_like(a).fillna(False).astype(bool))
+                     if isinstance(a, pd.DataFrame) else a for a in evaluated]
     return spec.fn(*evaluated)
 
 
@@ -106,7 +118,7 @@ def compute_factor(
     ranks/z-scores are computed only over eligible names.
     """
     causality.validate(node)
-    scores = evaluate(node, panels)
+    scores = evaluate(node, panels, eligibility)
     if np.isscalar(scores):
         raise ValueError("factor reduced to a scalar; needs a field somewhere")
 
@@ -118,8 +130,10 @@ def compute_factor(
         elig = eligibility.reindex(index=ref.index, columns=ref.columns).fillna(False)
         scores = scores.where(elig.astype(bool))
 
-    # coverage mask: drop rows without enough cross-sectional support.
-    coverage = scores.notna().mean(axis=1)
+    scores = scores.replace([np.inf, -np.inf], np.nan)
+    # Coverage is measured against today's eligible universe.
+    denominator = elig.astype(bool).sum(axis=1).replace(0, np.nan) if eligibility is not None else scores.shape[1]
+    coverage = scores.notna().sum(axis=1) / denominator
     scores = scores.where(coverage >= config.min_coverage)
 
     if config.winsorize_p:
@@ -134,6 +148,8 @@ def compute_factor(
         scores = scores.sub(scores.mean(axis=1), axis=0)
     if config.execution_lag:
         scores = scores.shift(config.execution_lag)
+    if eligibility is not None:
+        scores = scores.where(elig.astype(bool))
     return scores
 
 

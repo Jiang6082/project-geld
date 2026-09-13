@@ -48,6 +48,11 @@ def _batch_bars(n_days=760, n_symbols=10, seed=7, spread=0.0016):
         for t, (p, v) in enumerate(zip(prices, vol)):
             rows.append({"timestamp": idx[t], "symbol": f"S{j:02d}", "open": p, "high": p,
                          "low": p, "close": p, "volume": v})
+    # Independent observed benchmark; absent SPY is never treated as zero risk.
+    prices = 100 * np.exp(np.cumsum(rng.normal(0., 0.003, size=n_days)))
+    for ts, p in zip(idx, prices):
+        rows.append({"timestamp": ts, "symbol": "SPY", "open": p, "high": p,
+                     "low": p, "close": p, "volume": 1e7})
     return pd.DataFrame(rows), [f"S{j:02d}" for j in range(n_symbols)]
 
 

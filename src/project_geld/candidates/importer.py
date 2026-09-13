@@ -47,9 +47,12 @@ def import_bundle(path: str | Path, *, quarantine_dir: str | Path = DEFAULT_QUAR
         "bundle": bundle,
     }
     target_dir = Path(quarantine_dir)
-    safe_id = (result.candidate_id or "unknown").replace("/", "_").replace(":", "_")
+    safe_id = result.candidate_id  # validator enforces a portable filename component
     target = target_dir / f"{safe_id}.json"
-    atomic_write_text(target, json.dumps(record, indent=2, sort_keys=True))
+    try:
+        atomic_write_text(target, json.dumps(record, indent=2, sort_keys=True), overwrite=False)
+    except FileExistsError as exc:
+        raise BundleRejected(f"Candidate {safe_id!r} already exists; its history was preserved.") from exc
     return target
 
 

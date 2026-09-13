@@ -23,4 +23,5 @@ def test_grid_search_reports_out_of_sample_metrics(synthetic_bars):
         "robust_score",
         "annual_turnover",
     }.issubset(results)
-    assert results["robust_score"].is_monotonic_decreasing
+    assert results["selection_score"].equals(results["train_sharpe"])
+    assert results["selection_score"].is_monotonic_decreasing

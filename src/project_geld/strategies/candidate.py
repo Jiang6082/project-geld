@@ -49,6 +49,8 @@ def _preprocess_from_bundle(preprocessing: Any) -> PreprocessConfig:
     winsorize = True
     zscore = True
     if isinstance(preprocessing, dict):
+        if set(preprocessing) & {"min_coverage", "winsorize_p", "normalize", "neutralize", "execution_lag"}:
+            return PreprocessConfig(**preprocessing)
         winsorize = bool(preprocessing.get("winsorize", True))
         zscore = bool(preprocessing.get("cross_sectional_zscore", True))
     elif isinstance(preprocessing, list):

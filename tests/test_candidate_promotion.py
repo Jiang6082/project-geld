@@ -165,6 +165,10 @@ def _trending_bars(n_days=160, n_symbols=8, seed=7):
         for ts, price in zip(idx, prices):
             rows.append({"timestamp": ts, "symbol": sym, "open": float(price), "high": float(price),
                          "low": float(price), "close": float(price), "volume": 1e6})
+    benchmark_prices = 100 * np.exp(np.cumsum(rng.normal(0., 0.004, size=n_days)))
+    for ts, price in zip(idx, benchmark_prices):
+        rows.append({"timestamp": ts, "symbol": "SPY", "open": price, "high": price,
+                     "low": price, "close": price, "volume": 1e7})
     return pd.DataFrame(rows), symbols
 
 

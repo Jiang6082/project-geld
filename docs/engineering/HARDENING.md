@@ -1,5 +1,10 @@
 # Hardening additions
 
+This is a historical implementation note. Candidate evaluation, OOS gates,
+universe binding and shadow support were added after its original boundary
+work. See [the current review](../AUDIT_2026-09-13.md) and
+[the candidate runbook](../EMBERFORGE_PIPELINE.md) for current behavior.
+
 This change set adds operational safety and reproducibility infrastructure. It is
 **additive and behavior-preserving**: it does not change the economic logic, target
 weights, order behavior, or signal timing of any strategy (Daily V4, Intra V15, or

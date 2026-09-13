@@ -47,6 +47,9 @@ def benjamini_hochberg(pvalues: list[float], q: float = 0.10) -> list[bool]:
 
     Controls the expected false-discovery rate at ``q`` across the batch.
     """
+    if not math.isfinite(q) or not 0 < q < 1:
+        raise ValueError("q must be finite and in (0, 1)")
+    pvalues = [p if math.isfinite(p) and 0 <= p <= 1 else 1.0 for p in pvalues]
     m = len(pvalues)
     if m == 0:
         return []
@@ -82,6 +85,10 @@ def revalidate_batch(
     subjected to Benjamini-Hochberg FDR on their holdout-Sharpe p-values. Only
     candidates that pass gates AND survive FDR are promoted.
     """
+    benjamini_hochberg([], q=fdr_q)  # validate before any expensive evaluation
+    ids = [b.get("candidate_id") for b in bundles]
+    if any(not isinstance(cid, str) or not cid.strip() for cid in ids) or len(set(ids)) != len(ids):
+        raise ValueError("candidate_id values must be non-empty and unique within a batch")
     results: list[dict[str, Any]] = []
     for bundle in bundles:
         cid = bundle.get("candidate_id", "candidate")
@@ -109,12 +116,14 @@ def revalidate_batch(
             "verdict": verdict["verdict"],  # provisional; FDR applied below
         })
 
-    # FDR only over candidates that cleared their own gates (a failed candidate
-    # is already rejected; including its large p-value would only relax the
-    # threshold for the others).
+    # Retain EVERY attempted hypothesis in the denominator. Gate failures get
+    # p=1 rather than being removed: screening on holdout evidence before BH
+    # makes a lucky winner appear to have been the only hypothesis tested.
     eligible = [r for r in results if r["gates_passed"]]
-    reject_null = benjamini_hochberg([r["p_value"] for r in eligible], q=fdr_q)
-    survivors = {r["candidate_id"] for r, keep in zip(eligible, reject_null) if keep}
+    reject_null = benjamini_hochberg(
+        [r["p_value"] if r["gates_passed"] else 1.0 for r in results], q=fdr_q
+    )
+    survivors = {r["candidate_id"] for r, keep in zip(results, reject_null) if keep and r["gates_passed"]}
 
     promoted: list[str] = []
     for r in results:

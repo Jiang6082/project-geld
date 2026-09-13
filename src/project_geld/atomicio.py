@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any
 
 
-def atomic_write_text(path: str | Path, text: str, *, encoding: str = "utf-8") -> None:
+def atomic_write_text(path: str | Path, text: str, *, encoding: str = "utf-8", overwrite: bool = True) -> None:
     target = Path(path)
     target.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp_name = tempfile.mkstemp(dir=str(target.parent), prefix=f".{target.name}.", suffix=".tmp")
@@ -24,7 +24,13 @@ def atomic_write_text(path: str | Path, text: str, *, encoding: str = "utf-8") -
             handle.write(text)
             handle.flush()
             os.fsync(handle.fileno())
-        os.replace(tmp_name, target)
+        if overwrite:
+            os.replace(tmp_name, target)
+        else:
+            # Publish a complete file only if the name is still unused. The
+            # hard-link creation is atomic and fails on concurrent imports.
+            os.link(tmp_name, target)
+            os.unlink(tmp_name)
     except BaseException:
         try:
             os.unlink(tmp_name)

@@ -23,6 +23,7 @@ type-checked so genuinely malformed shapes are rejected rather than ignored.
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -79,6 +80,8 @@ def load_bundle(path: str | Path) -> dict[str, Any]:
 def validate_bundle(bundle: dict[str, Any]) -> ValidationResult:
     errors: list[str] = []
     warnings: list[str] = []
+    if not isinstance(bundle, dict):
+        return ValidationResult(False, errors=["Candidate bundle must be a JSON object."])
 
     # --- Unknown top-level / signal keys (no place to hide a code field) ----
     for key in bundle:
@@ -110,9 +113,16 @@ def validate_bundle(bundle: dict[str, Any]) -> ValidationResult:
         if key in bundle and (not isinstance(bundle[key], str) or not bundle[key].strip()):
             errors.append(f"{key} must be a non-empty string")
 
+    candidate_id = bundle.get("candidate_id")
+    if isinstance(candidate_id, str):
+        reserved = {"CON", "PRN", "AUX", "NUL", *{f"{p}{i}" for p in ("COM", "LPT") for i in range(1, 10)}}
+        if (not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,119}", candidate_id)
+                or candidate_id.endswith(".") or candidate_id.split(".")[0].upper() in reserved):
+            errors.append("candidate_id must be a portable filename: letters, digits, _, - and internal dots; no reserved names")
+
     if isinstance(signal, dict):
         kind = signal.get("kind")
-        if kind not in _ALLOWED_SIGNAL_KIND:
+        if not isinstance(kind, str) or kind not in _ALLOWED_SIGNAL_KIND:
             errors.append(f"signal_spec.kind must be one of {sorted(_ALLOWED_SIGNAL_KIND)}")
         if kind == "expression" and not isinstance(signal.get("expression"), str):
             errors.append("signal_spec.kind=expression requires a string 'expression'")
@@ -125,13 +135,13 @@ def validate_bundle(bundle: dict[str, Any]) -> ValidationResult:
     if isinstance(inputs, list):
         if not inputs:
             errors.append("required_inputs must not be empty")
-        bad = [x for x in inputs if x not in _ALLOWED_INPUTS]
+        bad = [x for x in inputs if not isinstance(x, str) or x not in _ALLOWED_INPUTS]
         if bad:
             errors.append(f"required_inputs has unsupported fields: {bad}")
     elif "required_inputs" in bundle:
         errors.append("required_inputs must be an array")
 
-    if "frequency" in bundle and bundle.get("frequency") not in _ALLOWED_FREQ:
+    if "frequency" in bundle and (not isinstance(bundle["frequency"], str) or bundle["frequency"] not in _ALLOWED_FREQ):
         errors.append(f"frequency must be one of {sorted(_ALLOWED_FREQ)}")
 
     lookback = bundle.get("lookback")
@@ -139,7 +149,7 @@ def validate_bundle(bundle: dict[str, Any]) -> ValidationResult:
         errors.append("lookback must be a positive integer")
 
     approval = bundle.get("approval_status")
-    if "approval_status" in bundle and approval not in _ALLOWED_APPROVAL:
+    if "approval_status" in bundle and (not isinstance(approval, str) or approval not in _ALLOWED_APPROVAL):
         errors.append(f"approval_status must be one of {sorted(_ALLOWED_APPROVAL)}")
 
     # --- Optional structured fields (both source-project shapes accepted) ----

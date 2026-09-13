@@ -17,6 +17,12 @@ def _period_metrics(result, start: pd.Timestamp, end: pd.Timestamp) -> dict[str,
     equity = result.equity[
         result.equity["timestamp"].between(start, end, inclusive="both")
     ].copy()
+    # Include the immediately preceding valuation as the opening balance. Without
+    # it, the first return (and first-day loss) in each holdout is discarded.
+    prior = result.equity[result.equity["timestamp"] < start].tail(1).copy()
+    if not prior.empty:
+        prior["benchmark_return"] = 0.0
+        equity = pd.concat([prior, equity], ignore_index=True)
     trades = result.trades[
         result.trades["timestamp"].between(start, end, inclusive="both")
     ].copy()
@@ -42,6 +48,10 @@ def grid_search(
     keys = sorted(parameter_grid)
     combinations = product(*(parameter_grid[key] for key in keys))
     dates = pd.Index(sorted(pd.to_datetime(bars["timestamp"], utc=True).unique()))
+    if len(dates) < 4:
+        raise ValueError("At least four sessions are required for train/test evaluation.")
+    if any(not values for values in parameter_grid.values()):
+        raise ValueError("Every parameter grid must contain at least one value.")
     split_index = min(max(int(len(dates) * train_fraction), 1), len(dates) - 1)
     train_start, train_end = dates[0], dates[split_index - 1]
     test_start, test_end = dates[split_index], dates[-1]
@@ -79,12 +89,13 @@ def grid_search(
                 "test_sharpe": test["sharpe"],
                 "test_max_drawdown": test["max_drawdown"],
                 "robust_score": min(train["sharpe"], test["sharpe"]),
+                "selection_score": train["sharpe"],
                 "orders": result.metrics["orders"],
                 "annual_turnover": result.metrics["annual_turnover"],
             }
         )
     return pd.DataFrame(rows).sort_values(
-        ["robust_score", "test_sharpe"], ascending=False
+        ["selection_score", "parameters"], ascending=[False, True], kind="stable"
     ).reset_index(drop=True)
 
 
