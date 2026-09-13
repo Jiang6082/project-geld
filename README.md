@@ -8,28 +8,22 @@ execution costs, before it is allowed anywhere near paper execution?
 This is research software, not investment advice. It is intentionally
 paper-only and has no live-trading mode.
 
-The platform also supports an isolated dual-account paper workflow: a slower
-Daily V4 account and a separate 15-minute Intra V15 account with independent
-Alpaca credentials, state, risk limits, and performance logs. See
-`docs/paper/DUAL_ACCOUNT_PAPER.md` for the proposed allocation and exact commands.
-Long-horizon intraday findings are recorded in `docs/research/LONG_INTRADAY_RESEARCH.md` and
-the short-continuation follow-up is in `docs/research/INTRADAY_V7_V9_RESEARCH.md`.
-The locked, order-free forward protocol is in `docs/research/FORWARD_SHADOW.md`.
-V12 parameter, timing, concentration, and universe checks are in
-`docs/research/INTRADAY_V12_STRESS.md`.
-The stronger causal-universe and IEX-versus-SIP validation is in
-`docs/research/INTRADAY_V12_PIT_VALIDATION.md`. It rejects the fixed-current-basket IEX result
-as the primary evidence and promotes the point-in-time/SIP specification to the
-research control; V12 remains research-only.
-`docs/research/INTRADAY_V13_RESEARCH.md` adds causal volatility, breadth, and correlation
-controls. V13 improves the point-in-time result across SIP, IEX, extended
-history, and cost stress, and is the current intraday paper challenger.
-`docs/research/INTRADAY_V14_RESEARCH.md` records a rejected 99%-active-session challenger.
-Its best zero-cost IEX variant was positive, but it became negative at only two
-basis points of slippage per side and was not promoted to paper.
-`docs/research/INTRADAY_V15_RESEARCH.md` combines a confidence-scaled daily SPY opening-trend
-sleeve with the selective V13 stock overlay. V15 is the current high-activity paper
-candidate; V13 remains its reproducible alpha control.
+## Engineering overview
+
+[Interactive walkthrough](https://jiang6082.github.io/projects/geld/) · [Portfolio](https://jiang6082.github.io/) · [Test workflow](https://github.com/Jiang6082/project-geld/actions/workflows/tests.yml)
+
+The engineering problem is keeping research and paper execution consistent while handling incomplete data, retries, and persistent state.
+
+| Design choice | Evidence |
+| --- | --- |
+| Strategies produce target weights; backtesting and paper execution consume the same contract | [Strategy protocol](src/project_geld/strategies/base.py), [backtester](src/project_geld/backtest.py) |
+| Reconcile existing orders and use deterministic client order IDs | [Paper adapter](src/project_geld/paper.py), [paper tests](tests/test_paper.py) |
+| Replace state files atomically after flushing writes | [Atomic I/O](src/project_geld/atomicio.py), [failure tests](tests/test_atomicio.py) |
+| Validate causality, costs, and candidate provenance before trusting a result | [Strategy tests](tests/test_strategies.py), [provenance tests](tests/test_candidate_provenance.py) |
+
+For a first run, use the [synthetic backtest](#first-backtest): it needs no credentials and writes metrics, equity, trades, and targets to inspect. Synthetic results demonstrate the software, not investment performance. The website's cost-sensitivity demo displays recorded research scenarios; it does not execute the trading engine in the browser.
+
+This is a local research and paper-execution system. It does not establish production uptime, distributed execution, or profitable live trading. Operational details and the research-version history follow below.
 
 ## Documentation
 
@@ -349,3 +343,28 @@ Then run:
 
     .venv\Scripts\python.exe scripts\fetch_sec_fundamentals.py
     .venv\Scripts\python.exe scripts\broad_v41_research.py
+
+## Research and paper-workflow history
+
+The platform also supports an isolated dual-account paper workflow: a slower
+Daily V4 account and a separate 15-minute Intra V15 account with independent
+Alpaca credentials, state, risk limits, and performance logs. See
+`docs/paper/DUAL_ACCOUNT_PAPER.md` for the proposed allocation and exact commands.
+Long-horizon intraday findings are recorded in `docs/research/LONG_INTRADAY_RESEARCH.md` and
+the short-continuation follow-up is in `docs/research/INTRADAY_V7_V9_RESEARCH.md`.
+The locked, order-free forward protocol is in `docs/research/FORWARD_SHADOW.md`.
+V12 parameter, timing, concentration, and universe checks are in
+`docs/research/INTRADAY_V12_STRESS.md`.
+The stronger causal-universe and IEX-versus-SIP validation is in
+`docs/research/INTRADAY_V12_PIT_VALIDATION.md`. It rejects the fixed-current-basket IEX result
+as the primary evidence and promotes the point-in-time/SIP specification to the
+research control; V12 remains research-only.
+`docs/research/INTRADAY_V13_RESEARCH.md` adds causal volatility, breadth, and correlation
+controls. V13 improves the point-in-time result across SIP, IEX, extended
+history, and cost stress, and is the current intraday paper challenger.
+`docs/research/INTRADAY_V14_RESEARCH.md` records a rejected 99%-active-session challenger.
+Its best zero-cost IEX variant was positive, but it became negative at only two
+basis points of slippage per side and was not promoted to paper.
+`docs/research/INTRADAY_V15_RESEARCH.md` combines a confidence-scaled daily SPY opening-trend
+sleeve with the selective V13 stock overlay. V15 is the current high-activity paper
+candidate; V13 remains its reproducible alpha control.
