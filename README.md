@@ -1,5 +1,10 @@
 # Project Geld
 
+[![Tests](https://github.com/Jiang6082/project-geld/actions/workflows/tests.yml/badge.svg)](https://github.com/Jiang6082/project-geld/actions/workflows/tests.yml)
+
+The [September 2026 engineering review](docs/AUDIT_2026-09-13.md) records corrected
+research-integrity bugs, compatibility changes, validation, and remaining work.
+
 Project Geld is a standalone research, backtesting, and Alpaca paper-trading
 engine for US equities. It is designed to answer a disciplined question:
 does a strategy retain evidence of alpha out of sample, after realistic
@@ -157,8 +162,10 @@ Run a training/test parameter grid:
       --train-fraction 0.70 \
       --output artifacts/experiments/momentum.csv
 
-Results are ranked by robust_score, defined as the lower of training and test
-Sharpe. This is deliberately conservative, but it is not proof of alpha.
+Results are ranked by `selection_score`, the training Sharpe only. Test-period
+metrics and `robust_score` (the lower of training and test Sharpe) are diagnostic
+columns; they never choose the winner. Selecting by either would reuse the test
+period for parameter selection.
 Promising candidates still need rolling walk-forward tests, different market
 regimes, broader universes, and paper observation.
 

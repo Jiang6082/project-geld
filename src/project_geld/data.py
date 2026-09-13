@@ -28,13 +28,16 @@ def normalize_bars(frame: pd.DataFrame) -> pd.DataFrame:
     missing = set(BAR_COLUMNS) - set(frame.columns)
     if missing:
         raise ValueError(f"Bar data is missing columns: {sorted(missing)}")
-    bars = frame[BAR_COLUMNS].copy()
+    columns = BAR_COLUMNS + (["vwap"] if "vwap" in frame.columns else [])
+    bars = frame[columns].copy().dropna(subset=["symbol"])
     bars["timestamp"] = pd.to_datetime(bars["timestamp"], utc=True).astype(
         "datetime64[ns, UTC]"
     )
-    bars["symbol"] = bars["symbol"].astype(str).str.upper()
-    for column in ["open", "high", "low", "close", "volume"]:
+    bars["symbol"] = bars["symbol"].astype(str).str.strip().str.upper()
+    bars = bars[bars["symbol"].ne("")]
+    for column in [c for c in columns if c not in {"timestamp", "symbol"}]:
         bars[column] = pd.to_numeric(bars[column], errors="coerce")
+    bars = bars.replace([np.inf, -np.inf], np.nan)
     bars = bars.dropna(subset=["timestamp", "symbol", "open", "close"])
     bars = bars[bars["open"].gt(0) & bars["close"].gt(0)]
     bars = bars.drop_duplicates(["timestamp", "symbol"], keep="last")

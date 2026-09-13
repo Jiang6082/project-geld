@@ -48,15 +48,15 @@ def test_config_override_wins():
     assert set(binding.symbols) == {"AAA", "BBB"}
 
 
-def test_max_symbols_caps_by_liquidity_order():
-    # BBB has the most bars -> most liquid -> kept first.
+def test_max_symbols_caps_by_stable_symbol_order():
+    # Full-history row counts are not a causal liquidity measure.
     bars = pd.concat([
         _bars(["AAA"], [0.0], n=40),
         _bars(["BBB"], [0.0], n=80),
         _bars(["CCC"], [0.0], n=60),
     ], ignore_index=True)
     binding = bind_universe({"universe_assumptions": "research-only"}, bars, benchmark="SPY", max_symbols=2)
-    assert binding.symbols[0] == "BBB"
+    assert binding.symbols == ["AAA", "BBB"]
     assert len(binding.symbols) == 2
 
 

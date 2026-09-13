@@ -722,6 +722,19 @@ def command_import_candidate(args) -> None:
     print(f"Quarantined (research-only, paper NOT enabled): {target}")
 
 
+def _check_candidate_for_evaluation(bundle) -> None:
+    from project_geld.candidates.integrity import verify_bundle_integrity
+    from project_geld.candidates.validator import validate_bundle
+    validation = validate_bundle(bundle)
+    if not validation.ok:
+        raise ValueError(f"candidate schema validation failed: {validation.errors}")
+    integrity = verify_bundle_integrity(bundle)
+    if not integrity["ok"]:
+        raise ValueError(f"candidate integrity validation failed: {integrity['problems']}")
+    if bundle.get("approval_status") != "approved":
+        raise ValueError("candidate must be approved before independent re-validation or shadow evaluation")
+
+
 def command_revalidate_candidate(args) -> None:
     """Independent OOS re-validation of a quarantined candidate -> verdict.
 
@@ -740,6 +753,7 @@ def command_revalidate_candidate(args) -> None:
     validate_config(config)
     record = load_record(args.bundle)
     bundle = record.get("bundle", record)
+    _check_candidate_for_evaluation(bundle)
 
     bars = normalize_bars(pd.read_csv(args.bars))
     if args.start:
@@ -800,11 +814,11 @@ def command_revalidate_candidate(args) -> None:
     if args.advance_state and "state" in record:
         evidence = {"verdict_path": str(verdict_path), "gates": verdict["reasons"]}
         try:
-            candidate_state.advance_file(
-                args.bundle, "validated_oos",
-                reason="Completed Geld independent OOS re-validation.", evidence=evidence,
-            )
             target = "shadow" if verdict["verdict"] == "promote_to_shadow" else "rejected"
+            if target == "shadow" and record["state"] == "quarantined":
+                candidate_state.advance_file(
+                    args.bundle, "validated_oos", reason="Passed Geld independent OOS gates.", evidence=evidence,
+                )
             candidate_state.advance_file(
                 args.bundle, target,
                 reason=f"OOS gates -> {verdict['verdict']}.", evidence=evidence,
@@ -832,7 +846,10 @@ def command_revalidate_batch(args) -> None:
     for path in sorted(Path(args.quarantine_dir).glob("*.json")):
         rec = load_record(path)
         bundle = rec.get("bundle", rec)
+        _check_candidate_for_evaluation(bundle)
         cid = bundle.get("candidate_id") or path.stem
+        if cid in records:
+            raise ValueError(f"candidate_id values must be unique; duplicate {cid!r}")
         records[cid] = {"path": path, "record": rec, "bundle": bundle}
     if not records:
         raise RuntimeError(f"No quarantined candidates found in {args.quarantine_dir}")
@@ -870,8 +887,9 @@ def command_revalidate_batch(args) -> None:
                 continue
             target = "shadow" if r["verdict"] == "promote_to_shadow" else "rejected"
             try:
-                candidate_state.advance_file(entry["path"], "validated_oos",
-                                             reason="Batch OOS re-validation completed.")
+                if target == "shadow" and entry["record"]["state"] == "quarantined":
+                    candidate_state.advance_file(entry["path"], "validated_oos",
+                                                 reason="Passed batch OOS and FDR gates.")
                 candidate_state.advance_file(entry["path"], target,
                                              reason=f"Batch FDR verdict -> {r['verdict']}.")
             except candidate_state.StateError as exc:
@@ -889,6 +907,7 @@ def command_candidate_shadow(args) -> None:
     validate_config(config)
     record = load_record(args.bundle)
     bundle = record.get("bundle", record)
+    _check_candidate_for_evaluation(bundle)
     if record.get("state") != "shadow":
         raise RuntimeError(
             f"Candidate is in state {record.get('state')!r}, not 'shadow'. Run "
@@ -1006,7 +1025,7 @@ def build_parser() -> argparse.ArgumentParser:
     revalidate.add_argument("--start")
     revalidate.add_argument("--end")
     revalidate.add_argument("--max-symbols", type=int, default=None,
-                            help="Cap the bound universe (most-liquid first) for a faster run.")
+                            help="Cap the bound universe in stable symbol order for a faster diagnostic run.")
     revalidate.add_argument("--advance-state", action="store_true",
                             help="Persist the state transition (validated_oos -> shadow/rejected).")
     revalidate.add_argument("--output", default="artifacts/candidates/verdicts")

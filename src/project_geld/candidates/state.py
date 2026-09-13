@@ -77,8 +77,7 @@ def advance(
     moment = (now or datetime.now(timezone.utc)).isoformat()
     record["state"] = to_state
     # paper is only ever enabled by an explicit manual step to paper state.
-    if to_state == "paper" and manual:
-        record["paper_enabled"] = True
+    record["paper_enabled"] = to_state == "paper" and manual
     record.setdefault("history", []).append(
         {
             "from": src,

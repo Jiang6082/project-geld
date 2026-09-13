@@ -84,6 +84,29 @@ _reg(OpSpec(
 
 
 # --- cross-sectional operators (act within each timestamp row) ---------------
+_reg(OpSpec("ts_sum", "ts", 2, lambda x, n: x.rolling(int(n), min_periods=int(n)).sum(), window_args=(1,)))
+_reg(OpSpec("ts_skew", "ts", 2, lambda x, n: x.rolling(int(n), min_periods=int(n)).skew(), window_args=(1,)))
+
+
+def _ts_zscore(x: pd.DataFrame, n: int) -> pd.DataFrame:
+    n = int(n)
+    roll = x.rolling(n, min_periods=n)
+    sd = roll.std().replace(0.0, np.nan)
+    return (x - roll.mean()) / sd
+
+
+def _bars_since(fn):
+    def _op(x: pd.DataFrame, n: int) -> pd.DataFrame:
+        n = int(n)
+        return x.rolling(n, min_periods=n).apply(lambda a: (len(a) - 1) - int(fn(a)), raw=True)
+    return _op
+
+
+_reg(OpSpec("ts_zscore", "ts", 2, _ts_zscore, window_args=(1,)))
+_reg(OpSpec("ts_argmax", "ts", 2, _bars_since(np.argmax), window_args=(1,)))
+_reg(OpSpec("ts_argmin", "ts", 2, _bars_since(np.argmin), window_args=(1,)))
+
+
 def _cs_zscore(df: pd.DataFrame) -> pd.DataFrame:
     mu = df.mean(axis=1)
     sd = df.std(axis=1).replace(0.0, np.nan)

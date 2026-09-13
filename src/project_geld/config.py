@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
+import math
 from pathlib import Path
 from typing import Any
 import tomllib
@@ -221,6 +222,18 @@ def load_config(path: str | Path = "config.example.toml") -> AppConfig:
 
 
 def validate_config(config: AppConfig) -> None:
+    def finite_numbers(values, prefix):
+        for name, value in values.items():
+            if isinstance(value, dict):
+                finite_numbers(value, f"{prefix}.{name}")
+            elif isinstance(value, (float, int)) and not isinstance(value, bool) and not math.isfinite(value):
+                raise ValueError(f"{prefix}.{name} must be finite.")
+    for section in ("backtest", "risk", "paper", "intraday"):
+        finite_numbers(asdict(getattr(config, section)), section)
+    if config.backtest.commission_per_share < 0:
+        raise ValueError("commission_per_share cannot be negative.")
+    if config.risk.max_order_notional <= 0 or config.risk.min_trade_notional < 0:
+        raise ValueError("max_order_notional must be positive and min_trade_notional non-negative.")
     if not config.universe.symbols:
         raise ValueError("The universe must contain at least one symbol.")
     if config.backtest.initial_cash <= 0:

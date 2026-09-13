@@ -12,6 +12,7 @@ digest, so comparison is prefix-aware.
 from __future__ import annotations
 
 from typing import Any
+import re
 
 from project_geld.candidates.dsl import canonical_string, factor_hash, parse, validate
 from project_geld.candidates.dsl.causality import CausalityError, ValidationError
@@ -19,10 +20,9 @@ from project_geld.candidates.dsl.parser import ParseError
 
 
 def _hash_matches(computed: str, declared: str) -> bool:
-    if not declared:
-        return False
-    a, b = computed.lower(), declared.lower()
-    return a == b or a.startswith(b) or b.startswith(a)
+    # Legacy bundles used 16 hex digits; never accept arbitrarily weak prefixes
+    # or a longer string with an unchecked suffix.
+    return bool(re.fullmatch(r"[0-9a-fA-F]{16,32}", declared)) and computed.lower().startswith(declared.lower())
 
 
 def verify_bundle_integrity(bundle: dict[str, Any]) -> dict[str, Any]:
@@ -36,7 +36,7 @@ def verify_bundle_integrity(bundle: dict[str, Any]) -> dict[str, Any]:
     expression = signal.get("expression") if isinstance(signal, dict) else None
     declared = str(bundle.get("code_hash", "") or "")
 
-    if signal.get("kind") != "expression" or not isinstance(expression, str):
+    if not isinstance(signal, dict) or signal.get("kind") != "expression" or not isinstance(expression, str):
         return {
             "ok": False, "expression_causal": False, "hash_matches": False,
             "canonical_expression": None, "computed_hash": None,

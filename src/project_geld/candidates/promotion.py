@@ -19,6 +19,7 @@ Verdict is machine-readable: ``promote_to_shadow`` (all gates pass) or
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, replace
+import math
 from typing import Any
 
 import pandas as pd
@@ -48,6 +49,7 @@ class GatePolicy:
     stress_slippage_bps: float = 15.0     # slippage used for the stress pass
     min_test_alpha: float = 0.0           # annualized alpha vs benchmark on holdout
     max_abs_beta: float = 1.50            # reject closet-index / leveraged-beta exposure
+    min_test_observations: int = 30       # refuse very short confirmation windows
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -66,6 +68,8 @@ class Gate:
 
 
 def _split_dates(dates: pd.Index, train: float, val: float) -> dict[str, tuple]:
+    if not (math.isfinite(train) and math.isfinite(val) and train > 0 and val > 0 and train + val < 1):
+        raise ValueError("train and val fractions must be positive and sum to less than 1")
     n = len(dates)
     if n < 3:
         raise ValueError("need at least 3 sessions to split train/val/test.")
@@ -114,25 +118,29 @@ def evaluate_gates(
         round(annual_turnover, 3), policy.max_annual_turnover,
         "full-period annual turnover (capacity proxy)",
     ))
-    test_alpha = float(test.get("annual_alpha", 0.0))
+    test_alpha = float(test.get("annual_alpha", float("nan")))
     gates.append(Gate(
         "oos_alpha", test_alpha > policy.min_test_alpha,
         round(test_alpha, 6), policy.min_test_alpha,
         "holdout alpha net of benchmark — edge is not just market beta",
     ))
-    test_beta = float(test.get("beta", 0.0))
+    test_beta = float(test.get("beta", float("nan")))
     gates.append(Gate(
         "beta_sanity", abs(test_beta) <= policy.max_abs_beta,
         round(test_beta, 4), policy.max_abs_beta,
         "holdout beta within bounds — not closet-index / leveraged-beta exposure",
     ))
-    if policy.require_stressed_positive and test_stressed is not None:
+    if policy.require_stressed_positive:
+        stressed_return = test_stressed.get("total_return", float("nan")) if test_stressed else float("nan")
         gates.append(Gate(
-            "cost_stress", test_stressed["total_return"] > 0.0,
-            round(test_stressed["total_return"], 6), 0.0,
+            "cost_stress", stressed_return > 0.0,
+            round(stressed_return, 6), 0.0,
             f"still net-positive on holdout at {policy.stress_slippage_bps} bps slippage",
         ))
-    return gates
+    # Infinity can pass ordinary comparisons; absent/non-finite evidence never
+    # passes a promotion gate. Serialize it as null, not non-standard JSON NaN.
+    return [replace(g, passed=False, value=None) if g.value is None or not math.isfinite(g.value) else g
+            for g in gates]
 
 
 def revalidate_candidate(
@@ -168,7 +176,11 @@ def revalidate_candidate(
 
     test_stressed_metrics = None
     if policy.require_stressed_positive:
-        stressed_cfg = replace(backtest, slippage_bps=policy.stress_slippage_bps)
+        stressed_cfg = replace(
+            backtest, slippage_bps=max(backtest.slippage_bps, policy.stress_slippage_bps),
+            symbol_slippage_bps={symbol: max(bps, policy.stress_slippage_bps)
+                                 for symbol, bps in backtest.symbol_slippage_bps.items()},
+        )
         stressed = run_backtest(
             bars, strategy, stressed_cfg, risk, benchmark, tradable_symbols, context_symbols
         )
@@ -180,6 +192,17 @@ def revalidate_candidate(
         test=seg["test"], val=seg["val"], test_stressed=test_stressed_metrics,
         annual_turnover=annual_turnover, policy=policy,
     )
+    gates.append(Gate("test_sample_size", n_obs["test"] >= policy.min_test_observations,
+                      n_obs["test"], policy.min_test_observations,
+                      "minimum number of held-out observations"))
+    benchmark_rows = bars[bars["symbol"].astype(str).str.upper().eq(benchmark.upper())].copy()
+    benchmark_rows["timestamp"] = pd.to_datetime(benchmark_rows["timestamp"], utc=True)
+    benchmark_dates = pd.Index(benchmark_rows.loc[
+        pd.to_numeric(benchmark_rows["close"], errors="coerce").map(
+            lambda x: math.isfinite(x) and x > 0), "timestamp"].unique())
+    benchmark_complete = dates.isin(benchmark_dates).all()
+    gates.append(Gate("benchmark_data", bool(benchmark_complete), float(benchmark_complete), 1.0,
+                      "observed benchmark prices required at every valuation; zero-filled missing benchmark is not alpha evidence"))
     verdict = "promote_to_shadow" if all(g.passed for g in gates) else "reject"
 
     return {
