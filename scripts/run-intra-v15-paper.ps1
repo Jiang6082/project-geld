@@ -6,7 +6,8 @@ param(
 $projectRoot = Split-Path -Parent $PSScriptRoot
 $arguments = @{
     RetrySeconds = $RetrySeconds
-    ConfigPath = Join-Path $projectRoot "configs\paper-intra-v15.toml"
+    ConfigPath = Join-Path $projectRoot "artifacts\paper-intra-v15\runtime-config.toml"
+    UniverseRefreshConfig = Join-Path $projectRoot "configs\paper-intra-v15.toml"
     OutputPath = Join-Path $projectRoot "artifacts\paper-intra-v15"
     RunnerName = "Intra V15"
     RunnerKey = "intra_v15"

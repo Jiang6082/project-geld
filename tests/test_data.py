@@ -120,3 +120,24 @@ def test_completed_daily_bars_excludes_current_session():
     )
     assert len(completed) == 1
     assert completed.iloc[0]["close"] == 100.5
+
+
+def test_rolling_cache_backfills_new_universe_members(tmp_path):
+    start = pd.Timestamp("2026-08-01", tz="UTC")
+    end = pd.Timestamp("2026-09-15", tz="UTC")
+    latest = pd.Timestamp("2026-09-14 19:00", tz="UTC")
+    cache = tmp_path / "rolling.pkl"
+    pd.DataFrame([[latest, "OLD", 10, 11, 9, 10, 100]], columns=BAR_COLUMNS).to_pickle(cache)
+
+    class Source:
+        calls = []
+
+        def fetch(self, symbols, beginning, ending, timeframe):
+            self.calls.append((symbols, pd.Timestamp(beginning)))
+            return pd.DataFrame([[beginning, symbol, 10, 11, 9, 10, 100]
+                                 for symbol in symbols], columns=BAR_COLUMNS)
+
+    source = Source()
+    result = fetch_rolling_bars(source, ["OLD", "NEW"], start, end, "1Min", cache)
+    assert source.calls == [(["OLD"], latest - pd.Timedelta(minutes=5)), (["NEW"], start)]
+    assert result.loc[result.symbol.eq("NEW"), "timestamp"].min() == start

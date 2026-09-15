@@ -3,6 +3,7 @@ param(
     [int]$RetrySeconds = 30,
     [string]$ConfigPath = "",
     [string]$OutputPath = "",
+    [string]$UniverseRefreshConfig = "",
     [string]$RunnerName = "Intra V13",
     [string]$RunnerKey = "intra_v13",
     [string]$MutexName = "Local\ProjectGeld-IntraV13-Paper"
@@ -11,6 +12,7 @@ param(
 $ErrorActionPreference = "Stop"
 $projectRoot = Split-Path -Parent $PSScriptRoot
 $geld = Join-Path $projectRoot ".venv\Scripts\geld.exe"
+$python = Join-Path $projectRoot ".venv\Scripts\python.exe"
 $config = if ($ConfigPath) { $ConfigPath } else { Join-Path $projectRoot "configs\paper-intra-v13.toml" }
 $output = if ($OutputPath) { $OutputPath } else { Join-Path $projectRoot "artifacts\paper-intra-v13" }
 $heartbeat = Join-Path $output "runner-heartbeat.json"
@@ -47,11 +49,11 @@ function Write-Heartbeat {
 }
 
 function Invoke-Geld {
-    param([string[]]$Arguments)
+    param([string[]]$Arguments, [string]$Executable = $geld)
     $previousPreference = $ErrorActionPreference
     $ErrorActionPreference = "Continue"
     try {
-        & $geld @Arguments 2>&1 | ForEach-Object {
+        & $Executable @Arguments 2>&1 | ForEach-Object {
             $line = $_.ToString()
             Write-Host $line
             Add-Content -LiteralPath $log -Value $line -Encoding UTF8
@@ -102,6 +104,23 @@ try {
         if ($now -gt $stop) {
             Write-RunnerMessage "$RunnerName paper window complete; runner exiting."
             break
+        }
+
+        if ($UniverseRefreshConfig) {
+            Write-Heartbeat -Phase "checking_universe"
+            $refreshArguments = @(
+                (Join-Path $PSScriptRoot "refresh_intraday_universe.py"),
+                "--config", $UniverseRefreshConfig, "--output", $output
+            )
+            $refreshCode = Invoke-Geld -Arguments $refreshArguments -Executable $python
+            if ($refreshCode -ne 0) {
+                # Refresh/data failures are not fixed by repeating the paper planner.
+                $refreshRetry = [Math]::Max(300, $RetrySeconds)
+                Write-RunnerMessage "Universe refresh failed; paper planning paused. Retrying in $refreshRetry seconds."
+                Write-Heartbeat -Phase "universe_refresh_error" -LastExitCode $refreshCode
+                Start-Sleep -Seconds $refreshRetry
+                continue
+            }
         }
 
         $arguments = @(
