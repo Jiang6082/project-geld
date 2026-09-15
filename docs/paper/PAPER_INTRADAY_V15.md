@@ -34,6 +34,51 @@ The computer must be powered on, connected, and logged into Windows. V15 is a
 paper experiment whose daily sleeve is highly cost-sensitive; paper fills do
 not represent real queue position, spreads, impact, or borrow conditions.
 
+## Universe maintenance (September 15, 2026)
+
+The published research universe ends on July 17, 2026. Using it directly in
+September correctly triggers the 45-day age guard, but retrying the same paper
+command cannot refresh it. The V15 runner now prepares
+`artifacts/paper-intra-v15/universe.csv` and `runtime-config.toml` before planning.
+The runtime configuration changes only the universe-file path; strategy, risk,
+execution, account and state settings remain those in the original TOML.
+
+On first use and when the snapshot's observation month is earlier than the
+current month, `scripts/refresh_intraday_universe.py` discovers current active,
+tradable common-stock candidates and ranks completed SIP/raw daily data. It
+retains the existing 100-stock, $5 minimum price, 60-session minimum history,
+20-session median dollar-volume and $10 million minimum dollar-volume rules.
+It requests 180 calendar days of history and excludes the current session.
+Ranking is for forward paper planning, not a reconstruction of historical
+point-in-time membership. Execution bars still use the configured IEX feed.
+
+All asset batches must succeed; at least 90% of discovered candidates must have
+data on the latest completed benchmark session; that session cannot be more
+than seven days old; and the selection must contain 100 unique symbols. A
+refresh also refuses to exclude existing paper positions or open orders.
+The previous snapshot is retained on validation/download failure, and the runner
+pauses planning and retries in five minutes. The normal 45-day age guard is not
+disabled or relaxed. Dated input caches, selection and a hash manifest are saved
+under `artifacts/paper-intra-v15/universe-refresh`.
+
+New universe members receive their full configured intraday history, rather
+than the short overlap used for already-cached symbols. Original research CSVs,
+membership JSON and strategy settings are unchanged.
+
+For one manual dry-run cycle, run from the repository root:
+
+```powershell
+.venv\Scripts\python.exe scripts\refresh_intraday_universe.py
+.venv\Scripts\geld.exe --config artifacts\paper-intra-v15\runtime-config.toml intraday-paper-once --output artifacts\paper-intra-v15
+```
+
+Use the derived runtime configuration for current paper status/one-shot commands.
+The source configuration still points at the frozen research snapshot on purpose.
+Only one V15 runner should be active; the scheduled wrapper owns the existing
+named process lock while refreshing and planning. Do not run a manual refresh
+concurrently with that runner. A refresh needs the existing Alpaca historical
+daily-data and paper-account read permissions; it sends no orders.
+
 ## Applied improvements (July 22, 2026) — Intra V15.0.6
 
 Patch trail: 15.0.1 minimum-trade floor fix, 15.0.2 implementation-shortfall

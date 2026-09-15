@@ -222,13 +222,18 @@ logged in.
 
 For the Intra V15 hybrid strategy, use the dedicated IEX paper configuration:
 
-    geld --config configs/paper-intra-v15.toml intraday-paper-once \
+    python scripts/refresh_intraday_universe.py
+    geld --config artifacts/paper-intra-v15/runtime-config.toml intraday-paper-once \
       --output artifacts/paper-intra-v15
 
 The executable paper configuration uses IEX because the configured paper
 account does not have recent SIP entitlement. To run the strategy throughout
 a session on Windows, launch `scripts/run-intra-v15-paper.ps1`; add `-DryRun`
-to exercise the loop without submitting. The runner evaluates each newly
+to exercise the loop without submitting. The V15 runner prepares a separate
+live universe automatically and refreshes it each calendar month using completed
+SIP/raw daily bars and the existing top-100 liquidity rules. Research snapshots
+remain unchanged. Failed refreshes pause planning and retry after five minutes;
+the 45-day age guard remains enabled. The runner evaluates each newly
 completed 15-minute bar from 09:31 through 15:46 ET, including the mandatory
 15:30 SPY and 15:45 overlay flatten targets. Each submitting cycle records
 per-order implementation shortfall, fill rate, and missed orders to

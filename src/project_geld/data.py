@@ -261,8 +261,17 @@ def fetch_rolling_bars(
                 - pd.Timedelta(max(overlap_minutes, 0), unit="min")
             ).to_pydatetime(),
         )
-    fresh = source.fetch(symbols, fetch_start, end, timeframe)
-    parts = [frame for frame in (cached, fresh) if not frame.empty]
+    # New universe members need the full lookback, not the existing members'
+    # latest timestamp. Otherwise a monthly refresh silently loses their history.
+    known = set(cached["symbol"])
+    continuing = [symbol for symbol in symbols if symbol.upper() in known]
+    added = [symbol for symbol in symbols if symbol.upper() not in known]
+    fresh_parts = []
+    if continuing:
+        fresh_parts.append(source.fetch(continuing, fetch_start, end, timeframe))
+    if added:
+        fresh_parts.append(source.fetch(added, start, end, timeframe))
+    parts = [frame for frame in [cached, *fresh_parts] if not frame.empty]
     combined = (
         normalize_bars(pd.concat(parts, ignore_index=True))
         if parts
