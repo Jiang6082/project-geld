@@ -10,9 +10,13 @@ the benchmark set to the Sharpe that the best of ``n_trials`` skill-less
 variants would be expected to reach by luck. Selecting the best of many variants
 on the same data raises that bar; DSR states how much.
 
-All Sharpe ratios here are per period (not annualized). Like every estimator in
-this module, the inputs assume roughly independent observations; serial
-correlation still overstates the evidence (see docs/AUDIT_2026-09-13.md).
+All Sharpe ratios here are per period (not annualized). Serial correlation is
+handled with an effective sample size: positively autocorrelated returns carry
+less information than their count suggests, so ``n`` is replaced by
+``n / (1 + 2 * sum_k w_k * rho_k)`` with Bartlett weights over a Newey-West lag
+window. Negative autocorrelation is never credited (the factor is floored at 1).
+This is the leading-order correction for the Sharpe estimator's variance; it is
+an approximation, not a full HAC treatment of skewness and kurtosis.
 """
 
 from __future__ import annotations
@@ -28,28 +32,58 @@ EULER_GAMMA = 0.5772156649015329
 _NORMAL = NormalDist()
 
 
+def newey_west_lags(n: int) -> int:
+    """Newey-West rule-of-thumb lag window, floor(4 * (n / 100) ** (2 / 9))."""
+    return max(int(math.floor(4.0 * (max(n, 1) / 100.0) ** (2.0 / 9.0))), 1)
+
+
+def effective_sample_size(
+    returns: pd.Series | np.ndarray, max_lag: int | None = None
+) -> float:
+    """Observations adjusted for positive serial correlation (never above ``n``)."""
+    values = np.asarray(pd.Series(returns, dtype=float).dropna(), dtype=float)
+    n = int(values.size)
+    if n < 3:
+        return float(n)
+    centered = values - values.mean()
+    gamma0 = float(np.mean(centered**2))
+    if not gamma0 > 0:
+        return float(n)
+    lags = min(max_lag if max_lag is not None else newey_west_lags(n), n - 1)
+    weighted = 0.0
+    for lag in range(1, lags + 1):
+        rho = float(np.sum(centered[lag:] * centered[:-lag]) / n) / gamma0
+        weighted += (1.0 - lag / (lags + 1.0)) * rho
+    factor = max(1.0 + 2.0 * weighted, 1.0)
+    return float(n / factor)
+
+
 def sharpe_moments(returns: pd.Series | np.ndarray) -> dict[str, float]:
-    """Per-period Sharpe, sample size, skewness and (non-excess) kurtosis."""
+    """Per-period Sharpe, sample size, effective sample size, skew and kurtosis."""
     values = np.asarray(pd.Series(returns, dtype=float).dropna(), dtype=float)
     n = int(values.size)
     nan = float("nan")
     if n < 3:
-        return {"n": n, "sharpe": nan, "skew": nan, "kurtosis": nan}
+        return {"n": n, "n_effective": float(n), "sharpe": nan, "skew": nan, "kurtosis": nan}
     centered = values - values.mean()
     variance = float(np.mean(centered**2))
     if not variance > 0:
-        return {"n": n, "sharpe": nan, "skew": nan, "kurtosis": nan}
+        return {"n": n, "n_effective": float(n), "sharpe": nan, "skew": nan, "kurtosis": nan}
     std = math.sqrt(variance)
     return {
         "n": n,
+        "n_effective": effective_sample_size(values),
         "sharpe": float(values.mean() / std),
         "skew": float(np.mean(centered**3) / std**3),
         "kurtosis": float(np.mean(centered**4) / variance**2),
     }
 
 
-def sharpe_standard_error(sharpe: float, n: int, skew: float, kurtosis: float) -> float:
-    """Standard error of a per-period Sharpe estimate under non-normal returns."""
+def sharpe_standard_error(sharpe: float, n: float, skew: float, kurtosis: float) -> float:
+    """Standard error of a per-period Sharpe estimate under non-normal returns.
+
+    ``n`` may be an effective (autocorrelation-adjusted) sample size.
+    """
     if n < 2 or not all(math.isfinite(x) for x in (sharpe, skew, kurtosis)):
         return float("nan")
     radicand = 1.0 - skew * sharpe + (kurtosis - 1.0) / 4.0 * sharpe**2
@@ -120,7 +154,9 @@ def trial_sharpe_variance(sharpes: list[float]) -> float | None:
 
 __all__ = [
     "deflated_sharpe_ratio",
+    "effective_sample_size",
     "expected_max_sharpe",
+    "newey_west_lags",
     "probabilistic_sharpe_ratio",
     "sharpe_moments",
     "sharpe_standard_error",
