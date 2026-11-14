@@ -30,6 +30,11 @@ Manual dry run:
 .\scripts\run-intra-v15-paper.ps1 -DryRun
 ```
 
+The script runs `geld run-intraday` (also used on a Linux server; see
+`docs/CLOUD_DEPLOY.md`). The runner reads Alpaca's market calendar: it exits on
+holidays and, on early-close days, flattens every managed position 15 minutes
+before the close with `intraday-paper-once --flatten-all`.
+
 The computer must be powered on, connected, and logged into Windows. V15 is a
 paper experiment whose daily sleeve is highly cost-sensitive; paper fills do
 not represent real queue position, spreads, impact, or borrow conditions.

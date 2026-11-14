@@ -45,8 +45,11 @@ For a non-submitting rehearsal, use:
 .\scripts\run-daily-v4-paper.ps1 -DryRun
 ```
 
-The runner executes once. The persistent cadence state then prevents another
-submitted rebalance until 21 completed sessions have elapsed.
+The runner (`geld run-daily`, also used by the GitHub Actions workflow in
+`docs/CLOUD_DEPLOY.md`) executes once. It first refreshes the 500-stock
+universe if a new month has begun, so the 45-day staleness guard no longer
+depends on re-running the research export. The persistent cadence state then
+prevents another submitted rebalance until 21 completed sessions have elapsed.
 
 Paper planning anchors the strategy's internal 21-session schedule at the
 latest completed bar (`rebalance_anchor = "end"`). The planner fetches a rolling
@@ -73,7 +76,9 @@ list them):
 to Daily V4.
 
 Orders are budgeted and submitted risk-reducing first and sells before buys,
-because the buying budget counts the proceeds of closing sales. Market orders are
+because the buying budget counts the proceeds of closing sales. The cycle waits
+up to `paper.sell_fill_timeout_seconds` (default 30) for those sells, re-reads
+the account and trims new buys to the cash actually available. Market orders are
 used because the backtest assumes next-session-open execution and Friday's
 close would be a stale limit-price reference on Monday.
 
