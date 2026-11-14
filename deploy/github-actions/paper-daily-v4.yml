@@ -1,0 +1,172 @@
+# Daily V4 paper account on GitHub Actions (no server needed).
+#
+# Install: move this file to .github/workflows/paper-daily-v4.yml and push.
+# It stays off until the variables below are set.
+#
+# Off by default. To enable, add repository secrets ALPACA_SWING_API_KEY and
+# ALPACA_SWING_SECRET_KEY, then set repository variables:
+#   DAILY_V4_ENABLED = true   run the schedule
+#   DAILY_V4_SUBMIT  = true   allow paper orders (otherwise every run is a dry run)
+# Optional: PAPER_STATE_REPO (a private repo for state) + secret PAPER_STATE_TOKEN,
+# and PAPER_STATE_BRANCH (default paper-state/daily-v4).
+#
+# State (cadence, ownership ledger, performance log, universe snapshot) is kept
+# on a separate branch, because Actions runners start empty. In a PUBLIC repo
+# that branch is public too; use PAPER_STATE_REPO to keep it private.
+# See docs/CLOUD_DEPLOY.md.
+name: paper-daily-v4
+
+on:
+  schedule:
+    # Universe refresh before the open (no-op unless a new month began).
+    - cron: "5 11 * * 1-5"
+    # Trading cycle: two UTC times cover daylight saving; the runner skips the
+    # launch that falls outside 09:30-10:30 ET.
+    - cron: "35 13 * * 1-5"
+    - cron: "35 14 * * 1-5"
+    # Read-only close reconciliation after the 20-minute data delay.
+    - cron: "30 20 * * 1-5"
+    - cron: "30 21 * * 1-5"
+  workflow_dispatch:
+    inputs:
+      task:
+        description: Task to run
+        type: choice
+        options: [cycle, close-check, refresh-universe]
+        default: cycle
+      submit:
+        description: Submit paper orders (also requires DAILY_V4_SUBMIT=true)
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+concurrency:
+  group: paper-daily-v4
+  cancel-in-progress: false
+
+jobs:
+  run:
+    if: vars.DAILY_V4_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      ALPACA_SWING_API_KEY: ${{ secrets.ALPACA_SWING_API_KEY }}
+      ALPACA_SWING_SECRET_KEY: ${{ secrets.ALPACA_SWING_SECRET_KEY }}
+      PROJECT_GELD_SWING_CONFIRM_PAPER: ${{ vars.DAILY_V4_SUBMIT == 'true' && 'YES' || 'NO' }}
+      STATE_REPO: ${{ vars.PAPER_STATE_REPO || github.repository }}
+      STATE_BRANCH: ${{ vars.PAPER_STATE_BRANCH || 'paper-state/daily-v4' }}
+      GELD_LOG_JSON: artifacts/logs/daily-v4.jsonl
+      CONFIG: configs/paper-daily-v4.toml
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[alpaca]"
+
+      - name: Restore state
+        id: restore
+        env:
+          STATE_TOKEN: ${{ secrets.PAPER_STATE_TOKEN || github.token }}
+        run: |
+          url="https://x-access-token:${STATE_TOKEN}@github.com/${STATE_REPO}.git"
+          status=0
+          git ls-remote --exit-code --heads "$url" "$STATE_BRANCH" >/dev/null 2>&1 || status=$?
+          if [ "$status" -eq 0 ]; then
+            git clone --quiet --depth 1 --branch "$STATE_BRANCH" "$url" state
+          elif [ "$status" -eq 2 ]; then
+            echo "State branch $STATE_BRANCH does not exist yet; starting fresh."
+            git init --quiet state
+            git -C state checkout --quiet -b "$STATE_BRANCH"
+            git -C state remote add origin "$url"
+          else
+            # Never trade without state: an empty cadence file would force a rebalance.
+            echo "::error::Cannot read the state repository (git exit $status); stopping."
+            exit 1
+          fi
+          mkdir -p artifacts
+          if [ -d state/artifacts ]; then cp -a state/artifacts/. artifacts/; fi
+
+      - name: Choose task
+        id: task
+        run: |
+          task="${{ inputs.task }}"
+          case "${{ github.event.schedule }}" in
+            "5 11 * * 1-5") task=refresh-universe ;;
+            "35 13 * * 1-5"|"35 14 * * 1-5") task=cycle ;;
+            "30 20 * * 1-5"|"30 21 * * 1-5") task=close-check ;;
+          esac
+          submit=""
+          if [ "${{ vars.DAILY_V4_SUBMIT }}" = "true" ]; then
+            if [ "${{ github.event_name }}" = "schedule" ] || [ "${{ inputs.submit }}" = "true" ]; then
+              submit="--submit"
+            fi
+          fi
+          echo "task=${task:-cycle}" >> "$GITHUB_OUTPUT"
+          echo "submit=$submit" >> "$GITHUB_OUTPUT"
+          echo "Task: ${task:-cycle} ${submit:-(dry run)}"
+
+      - name: Refresh universe
+        if: steps.task.outputs.task == 'refresh-universe'
+        run: geld --config "$CONFIG" refresh-universe --output artifacts/paper-daily-v4
+
+      - name: Trading cycle
+        if: steps.task.outputs.task == 'cycle'
+        run: |
+          window=""
+          if [ "${{ github.event_name }}" = "schedule" ]; then
+            window="--latest-start 10:30 --max-wait-minutes 10"
+          fi
+          geld --config "$CONFIG" run-daily --output artifacts/paper-daily-v4 ${{ steps.task.outputs.submit }} $window
+
+      - name: Close check
+        if: steps.task.outputs.task == 'close-check'
+        run: |
+          late=""
+          if [ "${{ github.event_name }}" = "schedule" ]; then
+            late="--max-late-minutes 45"
+          fi
+          geld --config "$CONFIG" run-close-check \
+            --output artifacts/paper-daily-v4 --close-output artifacts/paper-daily-v4-close $late
+
+      - name: Save state
+        if: always() && steps.restore.outcome == 'success'
+        run: |
+          mkdir -p state/artifacts
+          for dir in paper-daily-v4 paper-daily-v4-close logs; do
+            [ -d "artifacts/$dir" ] || continue
+            mkdir -p "state/artifacts/$dir"
+            find "artifacts/$dir" -maxdepth 1 -type f \
+              \( -name '*.json' -o -name '*.jsonl' -o -name '*.csv' -o -name '*.toml' \) \
+              -exec cp {} "state/artifacts/$dir/" \;
+            if [ -d "artifacts/$dir/manifests" ]; then
+              mkdir -p "state/artifacts/$dir/manifests"
+              cp artifacts/$dir/manifests/*.json "state/artifacts/$dir/manifests/" 2>/dev/null || true
+            fi
+            for refresh in artifacts/$dir/universe-refresh/*/; do
+              [ -d "$refresh" ] || continue
+              target="state/$refresh"
+              mkdir -p "$target"
+              for name in manifest.json selected.csv; do
+                [ -f "$refresh$name" ] && cp "$refresh$name" "$target"
+              done
+            done
+          done
+          cd state
+          git add -A
+          if git diff --cached --quiet; then
+            echo "State unchanged."
+            exit 0
+          fi
+          git -c user.name="geld-bot" -c user.email="geld-bot@users.noreply.github.com" \
+            commit --quiet -m "Daily V4 state ${{ steps.task.outputs.task }} $(date -u +%Y-%m-%dT%H:%MZ) [skip ci]"
+          git push --quiet origin "$STATE_BRANCH"

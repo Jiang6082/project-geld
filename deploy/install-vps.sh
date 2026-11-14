@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # Install Project Geld's paper runners on an Ubuntu/Debian server with systemd.
 #
-#   sudo deploy/install-vps.sh                # Intra V15 only (Daily V4 on GitHub Actions)
-#   sudo deploy/install-vps.sh --with-daily   # also run Daily V4 and its close check here
-#   sudo deploy/install-vps.sh --dry-run      # install, but never submit paper orders
+#   sudo bash deploy/install-vps.sh              # Intra V15 only (Daily V4 on GitHub Actions)
+#   sudo bash deploy/install-vps.sh --with-daily # also run Daily V4 and its close check here
+#   sudo bash deploy/install-vps.sh --dry-run    # install, but never submit paper orders
 #
 # Run from the repository checkout, as root (sudo). The services run as the
 # user who owns the checkout. Re-running is safe: units are rewritten and the
