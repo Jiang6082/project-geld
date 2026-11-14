@@ -1,0 +1,6 @@
+{
+  "strategy": "intra_v15",
+  "version": "Intra V15.0.6",
+  "config": "configs/paper-intra-v15.toml",
+  "changes": 150
+}
