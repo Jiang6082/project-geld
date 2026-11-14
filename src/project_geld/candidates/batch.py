@@ -117,7 +117,9 @@ def revalidate_batch(
         )
         independent = bool(verdict.get("holdout_independent_of_discovery"))
         test = verdict["segments"]["test"]
-        p = sharpe_pvalue(float(test.get("sharpe") or 0.0), int(test.get("n_obs") or 0))
+        # Autocorrelation-adjusted observations when the verdict provides them.
+        observations = test.get("n_effective") or test.get("n_obs") or 0
+        p = sharpe_pvalue(float(test.get("sharpe") or 0.0), int(round(float(observations))))
         gates_passed = verdict["verdict"] == "promote_to_shadow"
         results.append({
             "candidate_id": cid,
