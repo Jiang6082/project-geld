@@ -119,6 +119,12 @@ def run_intraday_backtest(
         lambda values: float(np.prod(1.0 + values) - 1.0)
     )
     daily["benchmark_return"] = daily["session_date"].map(benchmark_daily)
+    # Prepend the opening valuation (no position is held before the first
+    # signal executes) so the first session's return is measured, not dropped.
+    opening = equity.iloc[[0]].copy()
+    opening["benchmark_return"] = 0.0
+    if daily.index[0] != opening.index[0]:
+        daily = pd.concat([opening, daily])
     daily["daily_return"] = daily["equity"].pct_change(fill_method=None).fillna(0.0)
     metrics = calculate_metrics(daily, raw.trades)
     return BacktestResult(
