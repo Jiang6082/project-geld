@@ -32,14 +32,22 @@ from project_geld.intraday import (
     resample_intraday_bars,
     run_intraday_backtest,
 )
+from project_geld.atomicio import atomic_write_dataframe_csv
 from project_geld.paper import (
     AlpacaPaperBroker,
     append_performance_snapshot,
+    evaluate_kill_switch,
     implementation_shortfall,
+    load_shortfall_history,
+    managed_ledger_path,
     mark_paper_rebalance,
+    outside_universe_symbols,
     paper_rebalance_due,
+    record_kill_switch_reset,
+    refresh_shortfall_history,
     run_paper_cycle,
-    shortfall_kill_switch_active,
+    unresolved_shortfall_since,
+    update_managed_ledger,
 )
 from project_geld.strategies.registry import available_strategies, create_strategy
 from project_geld.shadow import AlpacaShadowMarket, run_shadow_cycle
@@ -92,6 +100,50 @@ def _managed_symbols(config: AppConfig, strategy) -> list[str]:
         dict.fromkeys(
             [*config.universe.symbols, *([str(core).upper()] if core else [])]
         )
+    )
+
+
+def _report_ownership(snapshot, orphans: list[str], latest_prices: dict) -> None:
+    """Print positions the planner cannot or will not manage."""
+    unpriced = [symbol for symbol in orphans if symbol not in latest_prices]
+    held_orphans = [
+        symbol for symbol in orphans if abs(float(snapshot.positions.get(symbol, 0.0))) > 1e-12
+    ]
+    if held_orphans:
+        print(
+            "Outside-universe positions scheduled for liquidation at the next "
+            f"rebalance: {', '.join(held_orphans)}"
+        )
+    if unpriced:
+        print(
+            "Warning: no recent bars for ledger symbol(s) "
+            f"{', '.join(unpriced)}; they cannot be priced or liquidated automatically "
+            "and still count against gross exposure."
+        )
+    unmanaged = sorted(set(snapshot.unmanaged_symbols) - set(unpriced))
+    if unmanaged:
+        print(
+            f"Warning: {len(unmanaged)} position(s) are outside the "
+            f"strategy universe and its ledger ({', '.join(unmanaged)}). "
+            "They are never traded and reduce available gross exposure. If they belong "
+            "to this strategy, run `geld adopt-positions --symbols ...` to have them liquidated."
+        )
+
+
+def _priced(symbols: list[str], latest_prices: dict) -> list[str]:
+    """Symbols the planner can price. Unpriced orphans stay unmanaged, so their
+    market value keeps counting against available gross exposure."""
+    return [symbol for symbol in symbols if symbol in latest_prices]
+
+
+def _latest_closes(bars: pd.DataFrame) -> dict[str, float]:
+    return (
+        bars.sort_values("timestamp")
+        .groupby("symbol", as_index=False)
+        .tail(1)
+        .set_index("symbol")["close"]
+        .astype(float)
+        .to_dict()
     )
 
 
@@ -217,6 +269,9 @@ def command_paper(args) -> None:
             )
     context = _strategy_context(strategy)
     managed = _managed_symbols(config, strategy)
+    # Symbols this strategy still owns but that have left the universe. They are
+    # priced and liquidated, but never passed to the strategy as candidates.
+    orphans = outside_universe_symbols(config.paper, managed)
     start, end = default_date_range(config.paper.lookback_days)
     end -= timedelta(minutes=config.paper.market_data_delay_minutes)
     source = CachedBarSource(
@@ -227,7 +282,9 @@ def command_paper(args) -> None:
         ),
         config.data.cache_dir,
     )
-    data_symbols = list(dict.fromkeys([*config.universe.data_symbols, *context]))
+    data_symbols = list(
+        dict.fromkeys([*config.universe.data_symbols, *context, *orphans])
+    )
     bars = source.fetch(data_symbols, start, end)
     bars = completed_daily_bars(
         bars,
@@ -236,7 +293,9 @@ def command_paper(args) -> None:
     if bars.empty:
         raise RuntimeError("No completed daily bars are available for paper planning.")
     broker = AlpacaPaperBroker(config.account.credential_profile)
-    snapshot = broker.snapshot(managed)
+    latest_prices = _latest_closes(bars)
+    snapshot = broker.snapshot([*managed, *_priced(orphans, latest_prices)])
+    _report_ownership(snapshot, orphans, latest_prices)
     output = Path(args.output)
     output.mkdir(parents=True, exist_ok=True)
     performance = append_performance_snapshot(
@@ -272,6 +331,13 @@ def command_paper(args) -> None:
         print("Submission requested but cadence guard kept this cycle preview-only.")
     if submit:
         mark_paper_rebalance(config.paper, strategy.name, latest_session)
+        update_managed_ledger(
+            managed_ledger_path(config.paper),
+            snapshot,
+            traded_symbols=(
+                set(result.orders["symbol"].astype(str)) if len(result.orders) else set()
+            ),
+        )
     print(result.message)
     if len(result.orders):
         print(result.orders.to_string(index=False))
@@ -320,6 +386,7 @@ def command_daily_close_check(args) -> None:
     market_is_open = bool(clock.is_open)
     context = _strategy_context(strategy)
     managed = _managed_symbols(config, strategy)
+    orphans = outside_universe_symbols(config.paper, managed)
     start, end = default_date_range(config.paper.lookback_days)
     end -= timedelta(minutes=config.paper.market_data_delay_minutes)
     source = CachedBarSource(
@@ -330,7 +397,9 @@ def command_daily_close_check(args) -> None:
         ),
         config.data.cache_dir,
     )
-    data_symbols = list(dict.fromkeys([*config.universe.data_symbols, *context]))
+    data_symbols = list(
+        dict.fromkeys([*config.universe.data_symbols, *context, *orphans])
+    )
     bars = bars_available_at_close(
         source.fetch(data_symbols, start, end),
         observed_at,
@@ -340,7 +409,9 @@ def command_daily_close_check(args) -> None:
     if bars.empty:
         raise RuntimeError("No completed daily bars are available for the close check.")
 
-    snapshot = broker.snapshot(managed)
+    latest_prices = _latest_closes(bars)
+    snapshot = broker.snapshot([*managed, *_priced(orphans, latest_prices)])
+    _report_ownership(snapshot, orphans, latest_prices)
     result = run_paper_cycle(
         bars,
         strategy,
@@ -352,14 +423,6 @@ def command_daily_close_check(args) -> None:
         snapshot=snapshot,
         context_symbols=context,
         confirmation_env=config.account.confirmation_env,
-    )
-    latest_prices = (
-        bars.sort_values("timestamp")
-        .groupby("symbol", as_index=False)
-        .tail(1)
-        .set_index("symbol")["close"]
-        .astype(float)
-        .to_dict()
     )
     reconciliation = build_position_reconciliation(
         result.targets, latest_prices, snapshot
@@ -443,7 +506,7 @@ def command_daily_close_check(args) -> None:
         [history, pd.DataFrame([{**summary, "order_status_counts": json.dumps(status_counts)}])],
         ignore_index=True,
     )
-    history.to_csv(history_path, index=False)
+    atomic_write_dataframe_csv(history, history_path, index=False)
 
     print(
         f"Daily V4 close check: {summary['mode']}; equity USD "
@@ -463,6 +526,68 @@ def command_daily_close_check(args) -> None:
         print("Market is open; the current partial daily bar was excluded.")
     elif not summary["signal_includes_current_session"]:
         print("Warning: the current session's final daily bar was not available.")
+
+
+def command_adopt_positions(args) -> None:
+    """Add existing outside-universe positions to the strategy's ledger.
+
+    Use this once for positions that were stranded before the ledger existed.
+    Adopted symbols are liquidated at the next submitting rebalance. No orders
+    are placed by this command.
+    """
+    config = load_config(args.config)
+    validate_config(config)
+    strategy = create_strategy(config.strategy.name, config.strategy.parameters)
+    managed = _managed_symbols(config, strategy)
+    orphans = outside_universe_symbols(config.paper, managed)
+    snapshot = AlpacaPaperBroker(config.account.credential_profile).snapshot(
+        [*managed, *orphans]
+    )
+    available = set(snapshot.unmanaged_symbols)
+    if not args.symbols and not args.all:
+        print(
+            "Unmanaged positions: "
+            + (", ".join(sorted(available)) if available else "none")
+            + ". Pass --symbols A,B (or --all on an account dedicated to this "
+            "strategy) to adopt them; nothing was changed."
+        )
+        return
+    requested = (
+        {item.strip().upper() for item in args.symbols.split(",") if item.strip()}
+        if args.symbols
+        else available
+    )
+    missing = sorted(requested - available)
+    if missing:
+        raise ValueError(
+            f"Not unmanaged positions in this account: {', '.join(missing)}"
+        )
+    if not requested:
+        print("No unmanaged positions to adopt.")
+        return
+    ledger = update_managed_ledger(
+        managed_ledger_path(config.paper), snapshot, adopted_symbols=requested
+    )
+    print(
+        f"Adopted {len(requested)} position(s): {', '.join(sorted(requested))}. "
+        f"Ledger now tracks {len(ledger)} symbol(s); adopted names outside the "
+        "universe are liquidated at the next submitting rebalance."
+    )
+
+
+def command_reset_kill_switch(args) -> None:
+    """Re-enable a latched shortfall kill-switch from now on.
+
+    Shortfall rows decided before the reset are ignored by the switch but kept in
+    the log. Run this only after investigating why execution cost breached the
+    gate.
+    """
+    output = Path(args.output)
+    stamp = record_kill_switch_reset(output)
+    print(
+        f"Kill-switch reset at {stamp.isoformat()}; earlier shortfall rows in "
+        f"{output / 'implementation_shortfall.csv'} no longer count toward it."
+    )
 
 
 def command_intraday_backtest(args) -> None:
@@ -564,25 +689,39 @@ def command_intraday_paper(args) -> None:
                 else pd.DataFrame()
             )
             history = pd.concat([history, cancellations], ignore_index=True)
-            history.drop_duplicates(subset=["order_id"], keep="last").to_csv(
-                history_path, index=False
+            atomic_write_dataframe_csv(
+                history.drop_duplicates(subset=["order_id"], keep="last"),
+                history_path,
+                index=False,
             )
     snapshot = broker.snapshot(managed)
     performance = append_performance_snapshot(snapshot, output / "performance.csv")
     submit = args.submit and due
     # Shortfall kill-switch: if the cost-sensitive base sleeve's trailing
     # implementation shortfall has breached the research's ~2 bps gate, force its
-    # core symbol flat this cycle and trade only the overlay.
+    # core symbol flat and trade only the overlay. A breach is latched in
+    # kill_switch_latch.json until `geld reset-kill-switch` is run. Monitoring
+    # never aborts the cycle: if the switch cannot be evaluated, only the base
+    # sleeve sits out this cycle.
     disable_symbols: set[str] = set()
     core_symbol = getattr(strategy, "core_symbol", None)
     shortfall_path = output / "implementation_shortfall.csv"
-    if core_symbol and shortfall_path.exists():
-        history = pd.read_csv(shortfall_path)
-        if shortfall_kill_switch_active(history, str(core_symbol)):
+    shortfall_history = pd.DataFrame()
+    if core_symbol:
+        try:
+            shortfall_history = load_shortfall_history(shortfall_path)
+            if evaluate_kill_switch(output, shortfall_history, str(core_symbol)):
+                disable_symbols.add(str(core_symbol).upper())
+                print(
+                    f"Kill-switch latched: {core_symbol} base sleeve trailing shortfall "
+                    "exceeded 2 bps; it stays flat until you investigate and run "
+                    f"`geld --config {args.config} reset-kill-switch --output {output}`."
+                )
+        except Exception as error:  # monitoring must never break the trading cycle
             disable_symbols.add(str(core_symbol).upper())
             print(
-                f"Kill-switch: {core_symbol} base sleeve trailing shortfall exceeds "
-                f"2 bps; forcing it flat this cycle."
+                f"Warning: kill-switch evaluation failed ({error}); the "
+                f"{core_symbol} base sleeve sits out this cycle."
             )
     result = run_paper_cycle(
         bars,
@@ -599,34 +738,46 @@ def command_intraday_paper(args) -> None:
     )
     result.targets.to_csv(output / "latest_targets.csv", index=False)
     result.orders.to_csv(output / "paper_orders.csv", index=False)
-    if submit and len(result.orders):
+    if submit:
         # Shortfall logging is monitoring only; it must never disrupt the trading
         # cycle or the state marking that follows, so failures are contained.
         try:
             session_open = latest_bar.tz_convert(
                 config.backtest.session_timezone
             ).normalize().tz_convert("UTC")
-            shortfall = implementation_shortfall(
-                result.orders, broker.order_activity(session_open)
+            history = shortfall_history
+            unresolved = unresolved_shortfall_since(history, latest_bar)
+            activity_start = (
+                min(session_open, unresolved) if unresolved is not None else session_open
             )
-            shortfall.insert(0, "decision_bar", latest_bar.isoformat())
-            shortfall_path = output / "implementation_shortfall.csv"
-            history = (
-                pd.read_csv(shortfall_path)
-                if shortfall_path.exists()
-                else pd.DataFrame()
-            )
-            pd.concat([history, shortfall], ignore_index=True).drop_duplicates(
-                subset=["decision_bar", "client_order_id"], keep="last"
-            ).to_csv(shortfall_path, index=False)
-            filled = shortfall[~shortfall["missed"]]
-            average_shortfall = (
-                float(filled["shortfall_bps"].mean()) if len(filled) else float("nan")
-            )
-            print(
-                f"Implementation shortfall: {len(filled)}/{len(shortfall)} filled; "
-                f"average {average_shortfall:.2f} bps (research invalidation > 2 bps)."
-            )
+            activity = broker.order_activity(activity_start)
+            current = pd.DataFrame()
+            if len(result.orders):
+                current = implementation_shortfall(result.orders, activity)
+                current.insert(0, "decision_bar", latest_bar.isoformat())
+            combined = pd.concat([history, current], ignore_index=True)
+            if len(combined):
+                combined = combined.drop_duplicates(
+                    subset=["decision_bar", "client_order_id"], keep="last"
+                )
+                # Earlier orders measured before they filled are re-scored here.
+                # A re-scoring failure must not lose this cycle's new rows.
+                try:
+                    combined = refresh_shortfall_history(combined, activity)
+                except Exception as error:
+                    print(f"Warning: re-scoring earlier shortfall rows failed: {error}")
+                atomic_write_dataframe_csv(combined, shortfall_path, index=False)
+            if len(current):
+                filled = current[~current["missed"]]
+                average_shortfall = (
+                    float(filled["shortfall_bps"].mean()) if len(filled) else float("nan")
+                )
+                print(
+                    f"Implementation shortfall: {len(filled)}/{len(current)} filled at "
+                    f"measurement; average {average_shortfall:.2f} bps "
+                    "(research invalidation > 2 bps). Late fills are re-scored on "
+                    "later cycles."
+                )
         except Exception as error:  # monitoring must never break the trading cycle
             print(f"Warning: implementation-shortfall logging failed: {error}")
     print(
@@ -744,7 +895,12 @@ def command_revalidate_candidate(args) -> None:
     NO parameter search — independent confirmation only.
     """
     from project_geld.candidates import state as candidate_state
-    from project_geld.candidates.promotion import GatePolicy, revalidate_candidate
+    from project_geld.candidates.promotion import (
+        GatePolicy,
+        declared_trials,
+        discovery_window,
+        revalidate_candidate,
+    )
     from project_geld.candidates.state import load_record
     from project_geld.candidates.universe import bind_strategy
     from project_geld.data import normalize_bars
@@ -781,6 +937,9 @@ def command_revalidate_candidate(args) -> None:
         context_symbols=[benchmark],
         policy=policy,
         candidate_id=bundle.get("candidate_id"),
+        n_trials=getattr(args, "trials", None) or 1,
+        discovery=discovery_window(bundle),
+        discovery_trials=declared_trials(bundle),
     )
     verdict["universe_binding"] = binding.to_dict()
 
@@ -795,6 +954,8 @@ def command_revalidate_candidate(args) -> None:
     for gate in verdict["gates"]:
         flag = "PASS" if gate["passed"] else "FAIL"
         print(f"  [{flag}] {gate['name']}: value={gate['value']} threshold={gate['threshold']}")
+    for warning in verdict.get("warnings", []):
+        print(f"  [WARN] {warning}")
     print(f"Verdict written: {verdict_path.resolve()}")
 
     # Cross-boundary provenance: this run is driven by an Emberforge candidate.
@@ -864,7 +1025,7 @@ def command_revalidate_batch(args) -> None:
     batch = revalidate_batch(
         [r["bundle"] for r in records.values()], bars,
         backtest=config.backtest, risk=config.risk, benchmark=benchmark,
-        fdr_q=args.fdr_q, max_symbols=args.max_symbols,
+        fdr_q=args.fdr_q, max_symbols=args.max_symbols, n_trials=getattr(args, "trials", None),
     )
 
     output = Path(args.output)
@@ -872,12 +1033,16 @@ def command_revalidate_batch(args) -> None:
     (output / "batch.verdict.json").write_text(
         json.dumps(batch, indent=2, sort_keys=True, default=str), encoding="utf-8"
     )
-    print(f"Candidates: {batch['n_candidates']}  gate-pass: {batch['n_gate_pass']}  "
+    print(f"Candidates: {batch['n_candidates']}  trials: {batch['n_trials']}  "
+          f"gate-pass: {batch['n_gate_pass']}  "
           f"promoted (survive FDR q={batch['fdr_q']}): {batch['n_promoted']}")
     for r in batch["candidates"]:
         print(f"  [{r['verdict'].upper():17}] {r['candidate_id']}: "
               f"sharpe={r.get('test_sharpe')} p={round(r['p_value'], 4)} "
               f"gates={'ok' if r['gates_passed'] else r.get('reasons')}")
+    for r in batch["candidates"]:
+        for warning in r.get("warnings", []):
+            print(f"  [WARN] {r['candidate_id']}: {warning}")
     print(f"Batch verdict written: {(output / 'batch.verdict.json').resolve()}")
 
     if args.advance_state:
@@ -977,6 +1142,28 @@ def build_parser() -> argparse.ArgumentParser:
     close_parser.add_argument("--output", default="artifacts/paper-daily-v4-close")
     close_parser.set_defaults(func=command_daily_close_check)
 
+    adopt_parser = subparsers.add_parser(
+        "adopt-positions",
+        help="Add stranded outside-universe positions to the strategy ledger (no orders).",
+    )
+    adopt_selection = adopt_parser.add_mutually_exclusive_group()
+    adopt_selection.add_argument(
+        "--symbols", help="Comma-separated unmanaged positions to adopt."
+    )
+    adopt_selection.add_argument(
+        "--all",
+        action="store_true",
+        help="Adopt every unmanaged position (only on an account dedicated to this strategy).",
+    )
+    adopt_parser.set_defaults(func=command_adopt_positions)
+
+    reset_parser = subparsers.add_parser(
+        "reset-kill-switch",
+        help="Re-enable a latched Intra V15 shortfall kill-switch from now on.",
+    )
+    reset_parser.add_argument("--output", default="artifacts/paper-intra-v15")
+    reset_parser.set_defaults(func=command_reset_kill_switch)
+
     intraday_backtest = subparsers.add_parser("intraday-backtest")
     intraday_backtest.add_argument(
         "--source", choices=["alpaca", "csv"], default="alpaca"
@@ -1026,6 +1213,9 @@ def build_parser() -> argparse.ArgumentParser:
     revalidate.add_argument("--end")
     revalidate.add_argument("--max-symbols", type=int, default=None,
                             help="Cap the bound universe in stable symbol order for a faster diagnostic run.")
+    revalidate.add_argument("--trials", type=int, default=None,
+                            help="Evaluations run on this holdout so far, including this one (deflated Sharpe). "
+                                 "The bundle's research_trials also counts unless the holdout follows its discovery_window.")
     revalidate.add_argument("--advance-state", action="store_true",
                             help="Persist the state transition (validated_oos -> shadow/rejected).")
     revalidate.add_argument("--output", default="artifacts/candidates/verdicts")
@@ -1041,6 +1231,8 @@ def build_parser() -> argparse.ArgumentParser:
     revalidate_batch.add_argument("--end")
     revalidate_batch.add_argument("--fdr-q", type=float, default=0.10, help="Benjamini-Hochberg FDR level.")
     revalidate_batch.add_argument("--max-symbols", type=int, default=None)
+    revalidate_batch.add_argument("--trials", type=int, default=None,
+                                  help="Evaluations on this holdout including this batch; at least the batch size is used.")
     revalidate_batch.add_argument("--advance-state", action="store_true")
     revalidate_batch.add_argument("--output", default="artifacts/candidates/verdicts")
     revalidate_batch.set_defaults(func=command_revalidate_batch)
