@@ -25,7 +25,10 @@ def test_batch_counts_failed_gates_in_testing_family(monkeypatch):
     monkeypatch.setattr(batch, "bind_strategy", lambda b, *a, **k: (b, SimpleNamespace(symbols=[])))
     monkeypatch.setattr(batch, "sharpe_pvalue", lambda *a: 0.04)
     monkeypatch.setattr(batch, "revalidate_candidate", lambda b, *a, **k: {
-        "segments": {"test": {"sharpe": 1.0, "n_obs": 252}},
+        # Holdout moments strong enough to clear the deflated-Sharpe gate, so the
+        # winner is rejected by batch FDR specifically.
+        "segments": {"test": {"sharpe": 1.0, "n_obs": 252, "n_returns": 252,
+                              "sharpe_per_period": 0.3, "skew": 0.0, "kurtosis": 3.0}},
         "verdict": "promote_to_shadow" if b["candidate_id"] == "winner" else "reject",
         "reasons": [],
     })
