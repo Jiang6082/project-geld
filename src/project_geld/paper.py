@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, fields, is_dataclass, replace
 import json
 import math
 import os
@@ -26,6 +26,7 @@ class AccountSnapshot:
     buying_power: float = 0.0
     shorting_enabled: bool = False
     unmanaged_notional: float = 0.0
+    unmanaged_symbols: frozenset[str] = frozenset()
 
 
 @dataclass(frozen=True)
@@ -164,20 +165,102 @@ def implementation_shortfall(
     return pd.DataFrame(rows, columns=columns)
 
 
+SHORTFALL_RESCORED_COLUMNS = [
+    "filled_average_price",
+    "filled_quantity",
+    "fill_rate",
+    "shortfall_bps",
+    "missed",
+]
+
+
+def refresh_shortfall_history(
+    history: pd.DataFrame, order_activity: pd.DataFrame
+) -> pd.DataFrame:
+    """Re-score recorded orders against fresher broker activity.
+
+    Shortfall is first measured seconds after submission, before a marketable
+    limit order may have filled. Rows whose order appears in ``order_activity``
+    are re-scored, so late fills replace their provisional ``missed`` status
+    instead of being excluded from the kill-switch forever.
+    """
+    if history.empty or order_activity is None or order_activity.empty:
+        return history
+    updated = history.reset_index(drop=True).copy()
+    planned = updated.drop(
+        columns=[column for column in SHORTFALL_RESCORED_COLUMNS if column in updated.columns]
+    ).rename(columns={"planned_quantity": "quantity"})
+    rescored = implementation_shortfall(planned, order_activity)
+    known = set(order_activity["client_order_id"].astype(str))
+    mask = updated["client_order_id"].astype(str).isin(known).to_numpy()
+    if not mask.any():
+        return updated
+    for column in SHORTFALL_RESCORED_COLUMNS:
+        if column not in updated.columns:
+            updated[column] = pd.NA
+        updated[column] = updated[column].astype(object)
+        updated.loc[mask, column] = rescored.loc[mask, column].to_numpy()
+    updated["missed"] = updated["missed"].map(
+        lambda value: str(value).strip().lower() in {"true", "1"}
+        if not isinstance(value, bool)
+        else value
+    )
+    for column in ["filled_average_price", "filled_quantity", "fill_rate", "shortfall_bps"]:
+        updated[column] = pd.to_numeric(updated[column], errors="coerce")
+    return updated
+
+
+def unresolved_shortfall_since(
+    history: pd.DataFrame, now: pd.Timestamp, max_age_days: int = 5
+) -> pd.Timestamp | None:
+    """Earliest recent decision bar with an unfilled or partially filled order."""
+    if history.empty or "decision_bar" not in history.columns:
+        return None
+    decision = pd.to_datetime(history["decision_bar"], utc=True, errors="coerce")
+    missed = (
+        history["missed"].astype(str).str.lower().eq("true")
+        if "missed" in history.columns
+        else pd.Series(False, index=history.index)
+    )
+    fill_rate = (
+        pd.to_numeric(history["fill_rate"], errors="coerce").fillna(0.0)
+        if "fill_rate" in history.columns
+        else pd.Series(0.0, index=history.index)
+    )
+    open_rows = (missed | fill_rate.lt(1.0)) & decision.ge(
+        pd.Timestamp(now) - pd.Timedelta(days=max_age_days)
+    )
+    return decision[open_rows].min() if open_rows.any() else None
+
+
+def _rows_since(history: pd.DataFrame, since: pd.Timestamp | None) -> pd.DataFrame:
+    if since is None or "decision_bar" not in history.columns:
+        return history
+    decision = pd.to_datetime(history["decision_bar"], utc=True, errors="coerce")
+    return history[decision.gt(pd.Timestamp(since))]
+
+
 def trailing_shortfall_bps(
-    history: pd.DataFrame, symbol: str, lookback: int = 20
+    history: pd.DataFrame,
+    symbol: str,
+    lookback: int = 20,
+    since: pd.Timestamp | None = None,
 ) -> float:
     """Mean implementation shortfall (bps) over recent filled orders for a symbol.
 
     Returns NaN when there is no filled history yet, so the caller treats an
     empty record as "not breached" rather than disabling a sleeve prematurely.
+    Rows decided at or before ``since`` (a manual kill-switch reset) are ignored.
     """
     if history.empty or "shortfall_bps" not in history.columns:
         return float("nan")
+    history = _rows_since(history, since)
     rows = history[history["symbol"].astype(str).str.upper() == symbol.upper()]
     if "missed" in rows.columns:
-        rows = rows[~rows["missed"].astype(bool)]
-    rows = rows.dropna(subset=["shortfall_bps"]).tail(lookback)
+        rows = rows[~rows["missed"].astype(str).str.lower().eq("true")]
+    rows = rows.assign(
+        shortfall_bps=pd.to_numeric(rows["shortfall_bps"], errors="coerce")
+    ).dropna(subset=["shortfall_bps"]).tail(lookback)
     return float(rows["shortfall_bps"].mean()) if len(rows) else float("nan")
 
 
@@ -186,14 +269,173 @@ def shortfall_kill_switch_active(
     symbol: str,
     threshold_bps: float = 2.0,
     lookback: int = 20,
+    since: pd.Timestamp | None = None,
 ) -> bool:
     """True when a symbol's trailing implementation shortfall breaches the gate.
 
     The Intra V15 research invalidates the daily base sleeve above ~2 bps of
-    average shortfall per side; this turns that rule into an automatic guard.
+    average shortfall per side. This is the stateless test; the paper loop uses
+    ``evaluate_kill_switch``, which latches a breach until a manual reset.
     """
-    average = trailing_shortfall_bps(history, symbol, lookback)
+    average = trailing_shortfall_bps(history, symbol, lookback, since)
     return bool(pd.notna(average) and average > threshold_bps)
+
+
+KILL_SWITCH_RESET_FILE = "kill_switch_reset.json"
+KILL_SWITCH_LATCH_FILE = "kill_switch_latch.json"
+
+
+def record_kill_switch_latch(
+    output_dir: str | Path, trailing_bps: float, at: pd.Timestamp | None = None
+) -> pd.Timestamp:
+    """Persist a tripped kill-switch so it survives log changes and later fills."""
+    stamp = pd.Timestamp.now(tz="UTC") if at is None else pd.Timestamp(at)
+    if stamp.tzinfo is None:
+        stamp = stamp.tz_localize("UTC")
+    atomic_write_text(
+        Path(output_dir) / KILL_SWITCH_LATCH_FILE,
+        json.dumps({"latched_at": stamp.isoformat(), "trailing_bps": float(trailing_bps)}, indent=2),
+    )
+    return stamp
+
+
+def kill_switch_latched(output_dir: str | Path) -> bool:
+    """True while a recorded trip has not been followed by a manual reset."""
+    path = Path(output_dir) / KILL_SWITCH_LATCH_FILE
+    if not path.exists():
+        return False
+    latched_at = pd.Timestamp(json.loads(path.read_text(encoding="utf-8"))["latched_at"])
+    reset_at = read_kill_switch_reset(output_dir)
+    return reset_at is None or reset_at <= latched_at
+
+
+def evaluate_kill_switch(
+    output_dir: str | Path,
+    history: pd.DataFrame,
+    symbol: str,
+    threshold_bps: float = 2.0,
+    lookback: int = 20,
+    now: pd.Timestamp | None = None,
+) -> bool:
+    """Latching kill-switch decision for one cycle.
+
+    A breach is recorded in ``kill_switch_latch.json`` and stays in force until
+    ``record_kill_switch_reset``. Later fills (including the sleeve's own
+    flattening order) therefore cannot quietly re-enable it, and neither can a
+    quarantined or rewritten shortfall log.
+    """
+    if kill_switch_latched(output_dir):
+        return True
+    reset_at = read_kill_switch_reset(output_dir)
+    average = trailing_shortfall_bps(history, symbol, lookback, reset_at)
+    if pd.notna(average) and average > threshold_bps:
+        record_kill_switch_latch(output_dir, average, now)
+        return True
+    return False
+
+
+def record_kill_switch_reset(
+    output_dir: str | Path, at: pd.Timestamp | None = None
+) -> pd.Timestamp:
+    stamp = pd.Timestamp.now(tz="UTC") if at is None else pd.Timestamp(at)
+    if stamp.tzinfo is None:
+        stamp = stamp.tz_localize("UTC")
+    atomic_write_text(
+        Path(output_dir) / KILL_SWITCH_RESET_FILE,
+        json.dumps({"reset_at": stamp.isoformat()}, indent=2),
+    )
+    return stamp
+
+
+def read_kill_switch_reset(output_dir: str | Path) -> pd.Timestamp | None:
+    path = Path(output_dir) / KILL_SWITCH_RESET_FILE
+    if not path.exists():
+        return None
+    return pd.Timestamp(json.loads(path.read_text(encoding="utf-8"))["reset_at"])
+
+
+def load_shortfall_history(path: str | Path) -> pd.DataFrame:
+    """Read the shortfall log; an unreadable file is set aside, not fatal.
+
+    The corrupt file is renamed with a ``.corrupt-<timestamp>`` suffix so its
+    evidence is kept for inspection and the next write starts a clean log.
+    """
+    history_path = Path(path)
+    if not history_path.exists():
+        return pd.DataFrame()
+    try:
+        return pd.read_csv(history_path)
+    except Exception as error:
+        stamp = pd.Timestamp.now(tz="UTC").strftime("%Y%m%dT%H%M%SZ")
+        quarantined = history_path.with_name(f"{history_path.name}.corrupt-{stamp}")
+        history_path.replace(quarantined)
+        print(
+            f"Warning: unreadable shortfall log ({error}); moved to {quarantined.name}."
+        )
+        return pd.DataFrame()
+
+
+def managed_ledger_path(paper: PaperConfig) -> Path:
+    """Ledger of symbols this strategy has traded, kept beside its state file.
+
+    The name includes the client-order prefix so strategies that share a state
+    directory never share a ledger.
+    """
+    prefix = "".join(
+        character if character.isalnum() or character in "-_" else "_"
+        for character in paper.client_order_prefix
+    ) or "geld"
+    return paper.state_file.with_name(f"managed_symbols-{prefix}.json")
+
+
+def load_managed_ledger(path: str | Path) -> set[str]:
+    ledger = Path(path)
+    if not ledger.exists():
+        return set()
+    payload = json.loads(ledger.read_text(encoding="utf-8"))
+    return {str(symbol).upper() for symbol in payload.get("symbols", [])}
+
+
+def update_managed_ledger(
+    path: str | Path,
+    snapshot: AccountSnapshot,
+    traded_symbols: set[str] | list[str] = (),
+    adopted_symbols: set[str] | list[str] = (),
+) -> set[str]:
+    """Record every symbol the strategy holds or trades; prune finished ones.
+
+    Universe members are recorded too: a name held today can leave the universe
+    at the next refresh, and the ledger is what lets the planner find and
+    liquidate it then. A symbol is dropped once it has no position, no open order
+    and was not traded this cycle. ``snapshot`` must cover the universe plus the
+    current ledger so its positions describe everything the strategy owns.
+    """
+    held = {
+        symbol.upper()
+        for symbol, quantity in snapshot.positions.items()
+        if abs(float(quantity)) > 1e-12
+    }
+    open_orders = {symbol.upper() for symbol in snapshot.open_order_symbols}
+    traded = {symbol.upper() for symbol in traded_symbols}
+    adopted = {symbol.upper() for symbol in adopted_symbols}
+    ledger = load_managed_ledger(path)
+    retained = {
+        symbol
+        for symbol in ledger | held | traded
+        if symbol in held or symbol in open_orders or symbol in traded
+    } | adopted
+    # Ledger names still held but left out of this snapshot (for example an
+    # unpriced orphan kept unmanaged so it still counts against gross exposure)
+    # remain owned by the strategy.
+    retained |= ledger & {symbol.upper() for symbol in snapshot.unmanaged_symbols}
+    atomic_write_text(path, json.dumps({"symbols": sorted(retained)}, indent=2))
+    return retained
+
+
+def outside_universe_symbols(paper: PaperConfig, universe: list[str]) -> list[str]:
+    """Ledger symbols that have left the universe and must be liquidated."""
+    members = {symbol.upper() for symbol in universe}
+    return sorted(load_managed_ledger(managed_ledger_path(paper)) - members)
 
 
 def paper_rebalance_due(
@@ -226,6 +468,18 @@ def mark_paper_rebalance(
             indent=2,
         ),
     )
+
+
+def strategy_order_token(strategy_name: str) -> str:
+    """Eight-character strategy token for client order IDs.
+
+    Plain truncation mapped ``intra_v13`` and ``intra_v15`` (and every other
+    ``intra_v1x``) to the same ``intra_v1``. Underscores are dropped first, and
+    longer names keep their first and last four characters so version suffixes
+    survive: ``intra_v15`` -> ``intrav15``, ``momentum_v3`` -> ``momeumv3``.
+    """
+    compact = "".join(character for character in strategy_name if character.isalnum())
+    return compact if len(compact) <= 8 else compact[:4] + compact[-4:]
 
 
 def _floor_quantity(quantity: float) -> float:
@@ -383,7 +637,8 @@ def build_rebalance_orders(
             continue
         decision_code = pd.Timestamp(as_of).strftime("%Y%m%d%H%M")
         client_order_id = (
-            f"{prefix[:8]}-{decision_code}-{strategy_name[:8]}-{symbol[:8]}-{side[0]}"
+            f"{prefix[:8]}-{decision_code}-{strategy_order_token(strategy_name)}"
+            f"-{symbol[:8]}-{side[0]}"
         )[:48]
         orders.append(
             OrderIntent(
@@ -413,7 +668,9 @@ def build_rebalance_orders(
         + closing_sale_notional
     )
     cash_safe_orders: list[OrderIntent] = []
-    for order in orders:
+    # Budget in submission order, so risk-reducing buys (covers) are funded
+    # before new longs rather than after them.
+    for order in sequence_orders(orders):
         if order.side == "sell":
             cash_safe_orders.append(order)
             continue
@@ -447,7 +704,28 @@ def build_rebalance_orders(
         remaining_buying_budget -= affordable_quantity * (
             order.limit_price or order.reference_price
         )
-    return cash_safe_orders
+    return sequence_orders(cash_safe_orders)
+
+
+RISK_REDUCING_REASONS = frozenset(
+    {"close_long", "cover_short", "flatten_before_reverse", "daily_loss_exit"}
+)
+
+
+def sequence_orders(orders: list[OrderIntent]) -> list[OrderIntent]:
+    """Submission order: risk-reducing orders first, and sells before buys.
+
+    The buying budget already counts proceeds from closing sales, so those sales
+    must reach the broker before the buys that rely on them. The sort is stable,
+    so symbols stay alphabetical within each group.
+    """
+    return sorted(
+        orders,
+        key=lambda order: (
+            0 if order.reason in RISK_REDUCING_REASONS else 1,
+            0 if order.side == "sell" else 1,
+        ),
+    )
 
 
 class AlpacaPaperBroker:
@@ -474,10 +752,11 @@ class AlpacaPaperBroker:
             for position in all_positions
             if position.symbol in wanted
         }
+        unmanaged = [
+            position for position in all_positions if position.symbol not in wanted
+        ]
         unmanaged_notional = sum(
-            abs(float(position.market_value or 0))
-            for position in all_positions
-            if position.symbol not in wanted
+            abs(float(position.market_value or 0)) for position in unmanaged
         )
         open_orders = self.client.get_orders(
             filter=GetOrdersRequest(status=QueryOrderStatus.OPEN)
@@ -491,6 +770,9 @@ class AlpacaPaperBroker:
             buying_power=float(account.buying_power),
             shorting_enabled=bool(account.shorting_enabled),
             unmanaged_notional=unmanaged_notional,
+            unmanaged_symbols=frozenset(
+                str(position.symbol).upper() for position in unmanaged
+            ),
         )
 
     def short_availability(
@@ -669,6 +951,25 @@ class AlpacaPaperBroker:
                 raise error
 
 
+def align_rebalance_to_latest_bar(strategy: Strategy) -> Strategy:
+    """Return the strategy with its rebalance schedule anchored at the latest bar.
+
+    Paper planning fetches a rolling lookback window whose first bar moves every
+    day. Strategies that count rebalance bars from the first bar would otherwise
+    submit a selection made up to ``rebalance_every - 1`` sessions earlier, on a
+    phase that drifts with the window. Anchoring at the latest bar makes every
+    paper rebalance a fresh selection at the decision bar, which is what the
+    backtest models. Strategies without a ``rebalance_anchor`` field are returned
+    unchanged.
+    """
+    if is_dataclass(strategy) and any(
+        item.name == "rebalance_anchor" for item in fields(strategy)
+    ):
+        if getattr(strategy, "rebalance_anchor") != "end":
+            return replace(strategy, rebalance_anchor="end")
+    return strategy
+
+
 def run_paper_cycle(
     bars: pd.DataFrame,
     strategy: Strategy,
@@ -693,6 +994,7 @@ def run_paper_cycle(
     tradables = {symbol.upper() for symbol in universe}
     context = {symbol.upper() for symbol in (context_symbols or [])}
     strategy_bars = bars[bars["symbol"].isin(tradables | context)]
+    strategy = align_rebalance_to_latest_bar(strategy)
     targets = strategy.generate_targets(strategy_bars)
     latest_time = targets["timestamp"].max()
     latest_targets = targets[
