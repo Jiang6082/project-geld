@@ -25,6 +25,7 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -44,6 +45,7 @@ _REQUIRED = [
 _ALLOWED_TOP_LEVEL = set(_REQUIRED) | {
     "universe_assumptions", "preprocessing", "portfolio_construction",
     "evaluation_summary", "data_fingerprint", "code_hash",
+    "discovery_window", "research_trials",
 }
 _ALLOWED_SIGNAL_KEYS = {"kind", "expression", "reference", "parameters"}
 
@@ -179,6 +181,26 @@ def validate_bundle(bundle: dict[str, Any]) -> ValidationResult:
         if key in bundle and not isinstance(bundle[key], str):
             errors.append(f"{key} must be a string")
 
+    # --- Research provenance (optional; enforced at re-validation) -----------
+    window = bundle.get("discovery_window")
+    if "discovery_window" in bundle:
+        if not isinstance(window, dict) or set(window) != {"start", "end"}:
+            errors.append("discovery_window must be an object with exactly 'start' and 'end'")
+        else:
+            try:
+                start = _parse_instant(window["start"])
+                end = _parse_instant(window["end"])
+            except (TypeError, ValueError):
+                errors.append("discovery_window start/end must be ISO-8601 date strings")
+            else:
+                if start > end:
+                    errors.append("discovery_window start must not be after end")
+    trials = bundle.get("research_trials")
+    if "research_trials" in bundle and (
+        not isinstance(trials, int) or isinstance(trials, bool) or trials < 1
+    ):
+        errors.append("research_trials must be a positive integer")
+
     # --- Advisory -----------------------------------------------------------
     if approval != "approved":
         warnings.append(
@@ -186,9 +208,26 @@ def validate_bundle(bundle: dict[str, Any]) -> ValidationResult:
         )
     if not bundle.get("data_fingerprint"):
         warnings.append("data_fingerprint is missing; provenance comparison will be weaker.")
+    if "discovery_window" not in bundle:
+        warnings.append(
+            "discovery_window is missing; Geld cannot verify that its holdout postdates "
+            "the discovery search."
+        )
+    if "research_trials" not in bundle:
+        warnings.append(
+            "research_trials is missing; the deflated Sharpe counts only the trials "
+            "Geld itself sees."
+        )
 
     candidate_id = bundle.get("candidate_id") if isinstance(bundle.get("candidate_id"), str) else None
     return ValidationResult(ok=not errors, errors=errors, warnings=warnings, candidate_id=candidate_id)
+
+
+def _parse_instant(value: Any) -> datetime:
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError("not a date string")
+    parsed = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
 
 
 def _leaf_keys(obj: Any) -> list[str]:
