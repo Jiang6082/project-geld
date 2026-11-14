@@ -5,7 +5,12 @@ from dataclasses import dataclass, field
 import numpy as np
 import pandas as pd
 
-from project_geld.strategies.base import TARGET_COLUMNS, close_matrix
+from project_geld.strategies.base import (
+    TARGET_COLUMNS,
+    close_matrix,
+    is_rebalance_bar,
+    validate_rebalance_anchor,
+)
 
 
 def _cross_sectional_zscore(values: pd.DataFrame) -> pd.DataFrame:
@@ -106,6 +111,8 @@ class EquityMomentumV3:
     weighting_method: str = "inverse_downside_volatility"
     score_tilt_strength: float = 0.20
     beta_penalty: float = 0.50
+    # "start" (backtests) or "end" (paper planning); see base.is_rebalance_bar.
+    rebalance_anchor: str = "start"
     name: str = "momentum_v3"
 
     def __post_init__(self) -> None:
@@ -117,6 +124,7 @@ class EquityMomentumV3:
             raise ValueError("exit_rank must be at least max_symbols, both positive.")
         if self.rebalance_every < 1:
             raise ValueError("rebalance_every must be positive.")
+        validate_rebalance_anchor(self.rebalance_anchor)
         if not 0 < self.max_position_weight <= 1:
             raise ValueError("max_position_weight must be in (0, 1].")
         if not 0 <= self.max_pairwise_correlation <= 1:
@@ -341,7 +349,9 @@ class EquityMomentumV3:
         benchmark_slow = slow[benchmark]
         benchmark_close = close[benchmark]
         for index, timestamp in enumerate(close.index):
-            if index % self.rebalance_every == 0:
+            if is_rebalance_bar(
+                index, len(close.index), self.rebalance_every, self.rebalance_anchor
+            ):
                 ranked = (
                     score.loc[timestamp]
                     .where(eligible.loc[timestamp])
