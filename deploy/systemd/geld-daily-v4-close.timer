@@ -1,0 +1,9 @@
+[Unit]
+Description=Daily V4 close reconciliation on weekdays (only if not using GitHub Actions)
+
+[Timer]
+OnCalendar=Mon..Fri 16:25 America/New_York
+Unit=geld-daily-v4-close.service
+
+[Install]
+WantedBy=timers.target

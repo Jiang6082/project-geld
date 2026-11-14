@@ -1,0 +1,13 @@
+[Unit]
+Description=Project Geld Daily V4 paper cycle
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=@USER@
+WorkingDirectory=@REPO@
+EnvironmentFile=@REPO@/.env
+Environment=PYTHONUNBUFFERED=1
+ExecStart=@REPO@/.venv/bin/geld --config configs/paper-daily-v4.toml --log-json artifacts/logs/daily-v4.jsonl run-daily --output artifacts/paper-daily-v4 @SUBMIT@
+TimeoutStartSec=3h

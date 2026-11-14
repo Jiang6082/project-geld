@@ -1,0 +1,16 @@
+[Unit]
+Description=Project Geld Intra V15 paper session
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=@USER@
+WorkingDirectory=@REPO@
+EnvironmentFile=@REPO@/.env
+Environment=PYTHONUNBUFFERED=1
+ExecStart=@REPO@/.venv/bin/geld --config configs/paper-intra-v15.toml --log-json artifacts/logs/intra-v15.jsonl run-intraday --output artifacts/paper-intra-v15 @SUBMIT@
+# The runner retries failed cycles itself; this covers a crashed process.
+Restart=on-failure
+RestartSec=120
+TimeoutStopSec=60
