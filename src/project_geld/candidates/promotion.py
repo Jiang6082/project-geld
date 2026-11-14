@@ -200,7 +200,8 @@ def deflated_sharpe_gate(
     otherwise shrink the luck threshold toward zero.
     """
     sharpe = float(test_summary.get("sharpe_per_period", float("nan")))
-    n = int(test_summary.get("n_returns") or 0)
+    # Autocorrelation-adjusted observations when available.
+    n = float(test_summary.get("n_effective") or test_summary.get("n_returns") or 0)
     skew = float(test_summary.get("skew", float("nan")))
     kurtosis = float(test_summary.get("kurtosis", float("nan")))
     sampling = sharpe_standard_error(sharpe, n, skew, kurtosis) ** 2
@@ -291,11 +292,12 @@ def revalidate_candidate(
     test_summary.update(
         {
             "n_returns": moments["n"],
+            "n_effective": moments["n_effective"],
             "sharpe_per_period": moments["sharpe"],
             "skew": moments["skew"],
             "kurtosis": moments["kurtosis"],
             "probabilistic_sharpe": probabilistic_sharpe_ratio(
-                moments["sharpe"], moments["n"], moments["skew"], moments["kurtosis"]
+                moments["sharpe"], moments["n_effective"], moments["skew"], moments["kurtosis"]
             ),
         }
     )
