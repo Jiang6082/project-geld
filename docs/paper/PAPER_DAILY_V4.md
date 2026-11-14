@@ -46,7 +46,34 @@ For a non-submitting rehearsal, use:
 ```
 
 The runner executes once. The persistent cadence state then prevents another
-submitted rebalance until 21 completed sessions have elapsed. Market orders are
+submitted rebalance until 21 completed sessions have elapsed.
+
+Paper planning anchors the strategy's internal 21-session schedule at the
+latest completed bar (`rebalance_anchor = "end"`). The planner fetches a rolling
+800-day window whose first bar moves every day; with the backtest's
+start-anchored schedule the sleeve it submitted could be a selection made up to
+20 sessions earlier, on a phase that drifted daily. Backtests keep the
+start-anchored default, so published research numbers are unchanged.
+
+Positions are tracked in `artifacts/paper-daily-v4/managed_symbols-geldswg.json`.
+A held stock that drops out of the universe at a snapshot refresh stays
+managed: it is priced, shown in the close check, and sold at the next
+submitting rebalance instead of becoming a permanent unmanaged position. A
+ledger name with no recent bars cannot be priced; it stays in the ledger, is
+reported, and keeps counting against available gross exposure. Each cycle warns
+about any remaining unmanaged positions. Positions stranded before the ledger
+existed can be adopted once, without placing orders (run without arguments to
+list them):
+
+```powershell
+.venv\Scripts\geld.exe --config configs\paper-daily-v4.toml adopt-positions --symbols XYZ,ABC
+```
+
+`--all` adopts every unmanaged position; use it only on an account dedicated
+to Daily V4.
+
+Orders are budgeted and submitted risk-reducing first and sells before buys,
+because the buying budget counts the proceeds of closing sales. Market orders are
 used because the backtest assumes next-session-open execution and Friday's
 close would be a stale limit-price reference on Monday.
 

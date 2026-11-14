@@ -95,9 +95,26 @@ sub-period positive; the improvement is stable across thresholds 0.20-0.40.
 15.0.5 detail: each submitting cycle checks the trailing implementation
 shortfall for the base sleeve's core symbol. If the mean over the recent filled
 orders exceeds 2 bps (the research's invalidation gate), the base sleeve is
-forced flat for that cycle and only the overlay trades. The check reads
-`implementation_shortfall.csv`, is fail-safe (a read error never blocks
-trading), and the selective V13 overlay is unaffected.
+forced flat and only the overlay trades. The selective V13 overlay is
+unaffected.
+
+Kill-switch operation (November 2026 review):
+
+- **Latching.** A breach is recorded in `kill_switch_latch.json` and stays in
+  force regardless of later fills (including the sleeve's own flattening order)
+  or changes to the log. After investigating, re-enable it with
+  `geld --config <runtime-config> reset-kill-switch --output artifacts/paper-intra-v15`.
+  Rows decided before the reset stay in the log but no longer count.
+- **Late fills.** Shortfall is first measured seconds after submission. Every
+  submitting cycle re-reads broker activity back to the oldest unfilled or
+  partially filled order from the last five days and re-scores it, so a
+  marketable limit that filled late is no longer recorded as missed forever.
+- **Unreadable log.** The log is written atomically. If it still cannot be
+  parsed, it is renamed `implementation_shortfall.csv.corrupt-<timestamp>`, a
+  warning is printed, and a fresh log starts; an existing latch is unaffected.
+  If the switch itself cannot be evaluated, the base sleeve sits out that cycle
+  while the overlay trades. The monitor never aborts a cycle, and a failure to
+  re-score earlier rows never drops the current cycle's rows.
 
 15.0.4 detail: the base SPY sleeve now ramps continuously from the weak floor at
 5 bps to full weight at 15 bps rather than stepping straight to full. Exact IEX
