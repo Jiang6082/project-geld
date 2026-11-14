@@ -4,6 +4,8 @@
 
 The [September 2026 engineering review](docs/AUDIT_2026-09-13.md) records corrected
 research-integrity bugs, compatibility changes, validation, and remaining work.
+The [November 2026 review](docs/REVIEW_2026-11-14.md) records paper-execution and
+metric fixes and the selection-aware candidate checks.
 
 Project Geld is a standalone research, backtesting, and Alpaca paper-trading
 engine for US equities. It is designed to answer a disciplined question:
@@ -210,6 +212,12 @@ session's daily bar, allowing Monday orders to use Friday's completed SIP
 signal without a real-time SIP subscription. Launch its one-cycle Windows
 runner with `scripts/run-daily-v4-paper.ps1`; see `docs/paper/PAPER_DAILY_V4.md`.
 
+Held stocks that leave the universe are tracked in a per-strategy ledger and
+sold at the next submitting rebalance; `geld adopt-positions --symbols ...`
+adds positions that were stranded before the ledger existed. If the Intra V15
+shortfall kill-switch trips, it stays on until `geld reset-kill-switch` is run
+(see `docs/paper/PAPER_INTRADAY_V15.md`).
+
 Install the Daily V4 and Intra V15 execution tasks plus the Daily V4 close
 reconciliation task with:
 
@@ -262,6 +270,14 @@ operating checklist.
 The suite covers data validation, strategy output and causality, next-bar
 execution, transaction costs, risk caps, out-of-sample experiments, paper
 order idempotency inputs, and the daily-loss guard.
+
+`tests/test_golden_targets.py` freezes the target-weight changes that the
+deployed Daily V4 and Intra V15 configurations produce on fixed synthetic data.
+Both strategies inherit from research variants (Momentum V3; Intra V7-V13), so an
+edit to a parent fails this test instead of silently changing a paper account.
+For an intentional change, bump the strategy `version` and regenerate:
+
+    GELD_REGENERATE_GOLDEN=1 pytest tests/test_golden_targets.py
 
 ## Current scope
 
