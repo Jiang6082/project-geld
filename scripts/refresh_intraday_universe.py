@@ -1,9 +1,13 @@
-"""Prepare the live Intra V15 universe and a derived paper configuration."""
+"""Prepare a live paper universe (Intra V15 or Daily V4) and a derived configuration.
+
+Equivalent to ``geld refresh-universe``; kept for the existing Windows runners.
+"""
 from __future__ import annotations
 
 import argparse
 from pathlib import Path
 
+from project_geld.logs import configure_logging
 from project_geld.universe_refresh import refresh
 
 
@@ -13,6 +17,7 @@ def main() -> None:
     parser.add_argument("--output", type=Path, default=Path("artifacts/paper-intra-v15"))
     parser.add_argument("--force", action="store_true")
     args = parser.parse_args()
+    configure_logging()
     try:
         result = refresh(args.config, args.output, force=args.force)
     except Exception as error:

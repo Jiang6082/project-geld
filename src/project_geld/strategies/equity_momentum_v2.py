@@ -5,7 +5,12 @@ from dataclasses import dataclass, field
 import numpy as np
 import pandas as pd
 
-from project_geld.strategies.base import TARGET_COLUMNS, close_matrix
+from project_geld.strategies.base import (
+    TARGET_COLUMNS,
+    close_matrix,
+    is_rebalance_bar,
+    validate_rebalance_anchor,
+)
 
 
 @dataclass(frozen=True)
@@ -24,6 +29,8 @@ class EquityMomentumV2:
     max_per_sector: int = 2
     sector_map: dict[str, str] = field(default_factory=dict)
     membership_periods: dict[str, list[list[str | None]]] = field(default_factory=dict)
+    # "start" (backtests) or "end" (paper planning); see base.is_rebalance_bar.
+    rebalance_anchor: str = "start"
     name: str = "momentum_v2"
 
     def __post_init__(self) -> None:
@@ -35,6 +42,7 @@ class EquityMomentumV2:
             raise ValueError("exit_rank must be at least max_symbols.")
         if self.rebalance_every < 1:
             raise ValueError("rebalance_every must be positive.")
+        validate_rebalance_anchor(self.rebalance_anchor)
         if self.max_per_sector < 1:
             raise ValueError("max_per_sector must be positive.")
         if not 0 < self.gross_exposure <= 1:
@@ -89,7 +97,9 @@ class EquityMomentumV2:
         current_weights: dict[str, float] = {}
         rows: list[dict] = []
         for index, timestamp in enumerate(close.index):
-            if index % self.rebalance_every == 0:
+            if is_rebalance_bar(
+                index, len(close.index), self.rebalance_every, self.rebalance_anchor
+            ):
                 day_score = (
                     score.loc[timestamp]
                     .where(eligible.loc[timestamp])

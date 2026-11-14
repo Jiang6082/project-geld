@@ -84,6 +84,9 @@ class PaperConfig:
     limit_offset_bps: float = 0.0
     stale_order_seconds: int = 0
     market_exit_orders: bool = False
+    # Seconds to wait for sells and covers to fill before buys are sent and
+    # trimmed to the cash actually available. 0 sends everything at once.
+    sell_fill_timeout_seconds: float = 30.0
 
 
 @dataclass(frozen=True)
@@ -208,6 +211,9 @@ def load_config(path: str | Path = "config.example.toml") -> AppConfig:
             market_exit_orders=bool(
                 raw.get("paper", {}).get("market_exit_orders", False)
             ),
+            sell_fill_timeout_seconds=float(
+                raw.get("paper", {}).get("sell_fill_timeout_seconds", 30.0)
+            ),
         ),
         intraday=IntradayConfig(
             bar_minutes=int(raw.get("intraday", {}).get("bar_minutes", 15)),
@@ -289,6 +295,8 @@ def validate_config(config: AppConfig) -> None:
         raise ValueError("paper.limit_offset_bps must be in [0, 100].")
     if config.paper.stale_order_seconds < 0:
         raise ValueError("paper.stale_order_seconds cannot be negative.")
+    if not 0 <= config.paper.sell_fill_timeout_seconds <= 600:
+        raise ValueError("paper.sell_fill_timeout_seconds must be in [0, 600].")
     if config.intraday.bar_minutes not in {1, 5, 10, 15, 30, 60}:
         raise ValueError("intraday.bar_minutes must be one of 1, 5, 10, 15, 30, 60.")
     if config.intraday.lookback_days < 1:

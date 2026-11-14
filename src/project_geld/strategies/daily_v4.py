@@ -5,7 +5,12 @@ from dataclasses import dataclass, field
 import numpy as np
 import pandas as pd
 
-from project_geld.strategies.base import TARGET_COLUMNS, close_matrix
+from project_geld.strategies.base import (
+    TARGET_COLUMNS,
+    close_matrix,
+    is_rebalance_bar,
+    validate_rebalance_anchor,
+)
 from project_geld.strategies.equity_momentum_v3 import EquityMomentumV3
 
 
@@ -44,6 +49,8 @@ class DailyV4:
     sleeve_volatility_target: float | None = None
     sleeve_volatility_lookback: int = 126
     active_parameters: dict = field(default_factory=dict)
+    # "start" (backtests) or "end" (paper planning); see base.is_rebalance_bar.
+    rebalance_anchor: str = "start"
     name: str = "daily_v4"
     version: str = "Daily V4.0.4"
 
@@ -60,6 +67,7 @@ class DailyV4:
             raise ValueError("no_trade_band cannot be negative.")
         if self.rebalance_every < 1:
             raise ValueError("rebalance_every must be positive.")
+        validate_rebalance_anchor(self.rebalance_anchor)
         if (
             self.active_target_volatility is not None
             and self.active_target_volatility <= 0
@@ -88,6 +96,7 @@ class DailyV4:
             "benchmark_symbol": self.core_symbol.upper(),
             "max_position_weight": self.active_name_cap,
             "rebalance_every": self.rebalance_every,
+            "rebalance_anchor": self.rebalance_anchor,
             "regime_enabled": self.regime_enabled,
             "bullish_exposure": self.active_weight,
             "target_portfolio_volatility": ceiling,
@@ -135,7 +144,9 @@ class DailyV4:
             if len(sleeve_returns) > self.sleeve_volatility_lookback:
                 sleeve_returns.pop(0)
 
-            if index % self.rebalance_every == 0:
+            if is_rebalance_bar(
+                index, len(weights.index), self.rebalance_every, self.rebalance_anchor
+            ):
                 desired = weights.loc[timestamp, active_symbols].fillna(0.0)
                 proposed: dict[str, float] = {}
                 for symbol in active_symbols:

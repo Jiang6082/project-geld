@@ -20,7 +20,14 @@ from typing import Any
 
 import pandas as pd
 
-from project_geld.candidates.promotion import GatePolicy, revalidate_candidate
+from project_geld.candidates.promotion import (
+    GatePolicy,
+    declared_trials,
+    deflated_sharpe_gate,
+    discovery_window,
+    revalidate_candidate,
+)
+from project_geld.candidates.stats import trial_sharpe_variance
 from project_geld.candidates.universe import bind_strategy
 from project_geld.config import BacktestConfig, RiskConfig
 
@@ -76,6 +83,7 @@ def revalidate_batch(
     policy: GatePolicy = GatePolicy(),
     fdr_q: float = 0.10,
     max_symbols: int | None = None,
+    n_trials: int | None = None,
 ) -> dict[str, Any]:
     """Re-validate several candidates together and apply FDR across the batch.
 
@@ -86,9 +94,12 @@ def revalidate_batch(
     candidates that pass gates AND survive FDR are promoted.
     """
     benjamini_hochberg([], q=fdr_q)  # validate before any expensive evaluation
+    if n_trials is not None and (isinstance(n_trials, bool) or not isinstance(n_trials, int) or n_trials < 1):
+        raise ValueError("n_trials must be a positive integer when given")
     ids = [b.get("candidate_id") for b in bundles]
     if any(not isinstance(cid, str) or not cid.strip() for cid in ids) or len(set(ids)) != len(ids):
         raise ValueError("candidate_id values must be non-empty and unique within a batch")
+    batch_trials = max(len(bundles), n_trials or 1)
     results: list[dict[str, Any]] = []
     for bundle in bundles:
         cid = bundle.get("candidate_id", "candidate")
@@ -98,13 +109,17 @@ def revalidate_batch(
             results.append({"candidate_id": cid, "gates_passed": False, "verdict": "reject",
                             "reason": f"universe binding failed: {exc}", "p_value": 1.0})
             continue
+        # Deflation is applied below, once every trial's Sharpe is known.
         verdict = revalidate_candidate(
             strategy, bars, backtest=backtest, risk=risk, benchmark=benchmark,
             tradable_symbols=binding.symbols, context_symbols=[benchmark], policy=policy,
-            candidate_id=cid,
+            candidate_id=cid, n_trials=1, discovery=discovery_window(bundle),
         )
+        independent = bool(verdict.get("holdout_independent_of_discovery"))
         test = verdict["segments"]["test"]
-        p = sharpe_pvalue(float(test.get("sharpe") or 0.0), int(test.get("n_obs") or 0))
+        # Autocorrelation-adjusted observations when the verdict provides them.
+        observations = test.get("n_effective") or test.get("n_obs") or 0
+        p = sharpe_pvalue(float(test.get("sharpe") or 0.0), int(round(float(observations))))
         gates_passed = verdict["verdict"] == "promote_to_shadow"
         results.append({
             "candidate_id": cid,
@@ -113,8 +128,35 @@ def revalidate_batch(
             "test_n_obs": test.get("n_obs"),
             "p_value": p,
             "reasons": verdict["reasons"],
+            "warnings": [w for w in verdict.get("warnings", []) if not w.startswith("deflated Sharpe")],
             "verdict": verdict["verdict"],  # provisional; FDR applied below
+            "_test": test,
+            # The discovery search counts only if it could have seen this holdout.
+            "_trials": max(batch_trials, 1 if independent else declared_trials(bundle)),
         })
+
+    # Deflated Sharpe: every candidate evaluated on this holdout is a trial
+    # (plus any earlier evaluations the caller declares). A candidate's own
+    # discovery search also counts unless its holdout is independent of it. The
+    # trial Sharpe variance comes from the batch when it has two or more
+    # estimates, floored at each candidate's sampling variance.
+    variance = trial_sharpe_variance(
+        [float(r["_test"].get("sharpe_per_period", float("nan"))) for r in results if "_test" in r]
+    )
+    for r in results:
+        test = r.pop("_test", None)
+        trials = r.pop("_trials", batch_trials)
+        if test is None:
+            continue
+        gate, deflation = deflated_sharpe_gate(test, trials, policy, variance)
+        r["deflated_sharpe"] = deflation
+        if trials > 1 and not gate.passed:
+            r["gates_passed"] = False
+            r["verdict"] = "reject"
+            r["reasons"] = [
+                reason for reason in [*r.get("reasons", []), "deflated_sharpe"]
+                if reason != "all gates passed"
+            ]
 
     # Retain EVERY attempted hypothesis in the denominator. Gate failures get
     # p=1 rather than being removed: screening on holdout evidence before BH
@@ -133,12 +175,17 @@ def revalidate_batch(
             promoted.append(r["candidate_id"])
         else:
             if r["gates_passed"] and r["candidate_id"] not in survivors:
-                r["reasons"] = list(dict.fromkeys([*r.get("reasons", []), "fails_fdr"]))
+                r["reasons"] = list(dict.fromkeys(
+                    [reason for reason in r.get("reasons", []) if reason != "all gates passed"]
+                    + ["fails_fdr"]
+                ))
             r["verdict"] = "reject"
             r["fdr_survived"] = False
 
     return {
         "n_candidates": len(results),
+        "n_trials": batch_trials,
+        "trial_sharpe_variance": variance,
         "fdr_q": fdr_q,
         "n_gate_pass": len(eligible),
         "n_promoted": len(promoted),
@@ -146,7 +193,8 @@ def revalidate_batch(
         "candidates": results,
         "notes": (
             "Batch OOS confirmation with Benjamini-Hochberg FDR across candidates. "
-            "Promotion requires passing per-candidate gates AND surviving FDR. "
+            "Promotion requires passing per-candidate gates (including the deflated "
+            "Sharpe for the declared number of trials) AND surviving FDR. "
             "No parameter search."
         ),
     }

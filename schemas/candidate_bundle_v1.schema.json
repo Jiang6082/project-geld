@@ -46,6 +46,21 @@
     "data_fingerprint": { "type": "string" },
     "code_hash": { "type": "string", "description": "Fingerprint of the signal specification. NOT code to execute." },
     "approval_status": { "enum": ["draft", "approved", "rejected"] },
-    "created_at": { "type": "string", "description": "ISO-8601 creation timestamp." }
+    "created_at": { "type": "string", "description": "ISO-8601 creation timestamp." },
+    "discovery_window": {
+      "type": "object",
+      "description": "Date range the discovery search used. Geld requires its holdout to start after 'end'.",
+      "additionalProperties": false,
+      "required": ["start", "end"],
+      "properties": {
+        "start": { "type": "string", "description": "ISO-8601 date or timestamp." },
+        "end": { "type": "string", "description": "ISO-8601 date or timestamp." }
+      }
+    },
+    "research_trials": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Number of variants the discovery search evaluated; Geld's deflated Sharpe counts them as trials."
+    }
   }
 }

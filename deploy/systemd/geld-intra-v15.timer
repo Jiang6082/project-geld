@@ -1,0 +1,12 @@
+[Unit]
+Description=Start the Intra V15 paper session on weekdays
+
+[Timer]
+# The runner checks Alpaca's market calendar and exits on holidays.
+OnCalendar=Mon..Fri 09:20 America/New_York
+# If the server was down at 09:20, start on boot and join the session late.
+Persistent=true
+Unit=geld-intra-v15.service
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,6 @@
+{
+  "strategy": "daily_v4",
+  "version": "Daily V4.0.4",
+  "config": "configs/paper-daily-v4.toml",
+  "changes": 652
+}

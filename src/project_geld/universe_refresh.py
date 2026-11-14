@@ -1,4 +1,10 @@
-"""Refresh the live Intra V15 universe without rewriting research snapshots."""
+"""Refresh a paper strategy's live universe without rewriting research snapshots.
+
+Intra V15 keeps its 100-stock rules. Daily V4 uses the research universe rules
+(top 500 by 60-session median dollar volume, $5 minimum price, 252 sessions of
+history, $20 million minimum), so its paper universe no longer depends on
+re-running the broad research pipeline before the 45-day staleness guard trips.
+"""
 from __future__ import annotations
 
 import json
@@ -6,7 +12,7 @@ import os
 import re
 import tempfile
 import tomllib
-from dataclasses import asdict
+from dataclasses import asdict, dataclass
 from hashlib import sha256
 from pathlib import Path
 
@@ -19,11 +25,29 @@ from project_geld.broad_universe import (
     select_top_liquid,
 )
 from project_geld.data import AlpacaBarSource, normalize_bars
+from project_geld.logs import get_logger
+
+log = get_logger(__name__)
 
 RULES = BroadUniverseRules(
     top_n=100, minimum_price=5.0, minimum_history_sessions=60,
     dollar_volume_window=20, minimum_dollar_volume=10_000_000.0,
 )
+
+
+@dataclass(frozen=True)
+class RefreshProfile:
+    rules: BroadUniverseRules
+    history_days: int
+    # "guard": refuse a refresh that would strand positions (Intra V15).
+    # "ledger": hand held names to the ownership ledger so they are sold (Daily V4).
+    ownership: str
+
+
+PROFILES = {
+    "intra_v15": RefreshProfile(RULES, history_days=180, ownership="guard"),
+    "daily_v4": RefreshProfile(BroadUniverseRules(), history_days=420, ownership="ledger"),
+}
 
 
 def atomic_text(path: Path, text: str) -> None:
@@ -39,22 +63,22 @@ def atomic_text(path: Path, text: str) -> None:
         Path(name).unlink(missing_ok=True)
 
 
-def snapshot_date(frame: pd.DataFrame) -> pd.Timestamp:
+def snapshot_date(frame: pd.DataFrame, top_n: int = RULES.top_n) -> pd.Timestamp:
     if not {"timestamp", "symbol"}.issubset(frame.columns) or frame.empty:
         raise ValueError("Universe snapshot must contain dated symbols.")
     dates = pd.to_datetime(frame["timestamp"], utc=True, errors="raise")
     if dates.isna().any() or dates.nunique() != 1:
         raise ValueError("Live universe must contain exactly one observation date.")
     symbols = frame["symbol"]
-    if len(frame) != RULES.top_n or symbols.isna().any() or symbols.duplicated().any():
-        raise ValueError("Live universe must contain 100 distinct symbols.")
+    if len(frame) != top_n or symbols.isna().any() or symbols.duplicated().any():
+        raise ValueError(f"Live universe must contain {top_n} distinct symbols.")
     if not symbols.astype(str).str.fullmatch(r"[A-Z][A-Z.]{0,5}").all():
         raise ValueError("Live universe contains malformed symbols.")
     return dates.iloc[0]
 
 
-def needs_refresh(frame: pd.DataFrame, now: pd.Timestamp) -> bool:
-    observed = snapshot_date(frame).tz_convert("America/New_York")
+def needs_refresh(frame: pd.DataFrame, now: pd.Timestamp, top_n: int = RULES.top_n) -> bool:
+    observed = snapshot_date(frame, top_n).tz_convert("America/New_York")
     local = now.tz_convert("America/New_York")
     if observed.date() >= local.date():
         raise ValueError("Universe must use a completed earlier session.")
@@ -112,6 +136,38 @@ def check_account_membership(profile: str, symbols: list[str]) -> None:
         )
 
 
+def hand_off_ownership(config: dict, symbols: list[str], previous: list[str]) -> set[str]:
+    """Record every held name in the ownership ledger before the universe changes.
+
+    Names that leave the universe are then priced and sold by the paper planner
+    instead of being stranded as unmanaged positions.
+    """
+    from project_geld.config import PaperConfig
+    from project_geld.paper import (
+        AlpacaPaperBroker,
+        load_managed_ledger,
+        managed_ledger_path,
+        update_managed_ledger,
+    )
+
+    paper_raw = config.get("paper", {})
+    paper = PaperConfig(
+        state_file=Path(paper_raw.get("state_file", "artifacts/paper/rebalance_state.json")),
+        client_order_prefix=str(paper_raw.get("client_order_prefix", "geld")),
+    )
+    ledger_path = managed_ledger_path(paper)
+    profile = config.get("account", {}).get("credential_profile", "")
+    watched = sorted({*symbols, *previous, *load_managed_ledger(ledger_path)})
+    account = AlpacaPaperBroker(profile).snapshot(watched)
+    if account.unmanaged_symbols:
+        log.warning(
+            "Positions outside the old and new universe and the ledger stay unmanaged: %s. "
+            "If they belong to this strategy, run `geld adopt-positions --symbols ...`.",
+            ", ".join(sorted(account.unmanaged_symbols)),
+        )
+    return update_managed_ledger(ledger_path, account)
+
+
 def refresh(config_path: Path, output: Path, *, now: pd.Timestamp | None = None,
             force: bool = False) -> Path:
     now = pd.Timestamp.now(tz="UTC") if now is None else pd.Timestamp(now)
@@ -119,22 +175,30 @@ def refresh(config_path: Path, output: Path, *, now: pd.Timestamp | None = None,
         raise ValueError("Refresh time must include a timezone.")
     source_text = config_path.read_text(encoding="utf-8")
     config = tomllib.loads(source_text)
-    if config["strategy"]["name"] != "intra_v15":
-        raise ValueError("This refresh implements the Intra V15 universe rules only.")
+    strategy_name = config["strategy"]["name"]
+    if strategy_name not in PROFILES:
+        raise ValueError(
+            f"Universe refresh supports {', '.join(sorted(PROFILES))}, not {strategy_name}."
+        )
+    profile_rules = PROFILES[strategy_name]
+    rules = profile_rules.rules
     output = output.resolve()
     snapshot = output / "universe.csv"
     generated = output / "runtime-config.toml"
     generated_text = runtime_config(source_text, snapshot)
     if snapshot.exists() and not force:
         current = pd.read_csv(snapshot)
-        if not needs_refresh(current, now):
+        if not needs_refresh(current, now, rules.top_n):
             atomic_text(generated, generated_text)
-            print(f"Universe current: {snapshot_date(current).date()}, 100 symbols.", flush=True)
+            log.info(
+                "Universe current: %s, %d symbols.",
+                snapshot_date(current, rules.top_n).date(), rules.top_n,
+            )
             return generated
 
     # Exclude today's incomplete bar, including when run after the market close.
     end = now.tz_convert("America/New_York").normalize().tz_convert("UTC")
-    start = end - pd.Timedelta(days=180)
+    start = end - pd.Timedelta(days=profile_rules.history_days)
     profile = config.get("account", {}).get("credential_profile", "")
     bars_source = AlpacaBarSource("sip", "raw", profile)
     benchmark = config["universe"].get("benchmark", "SPY")
@@ -147,12 +211,12 @@ def refresh(config_path: Path, output: Path, *, now: pd.Timestamp | None = None,
         raise ValueError("Benchmark data is stale; existing universe retained.")
     master = active_candidates(profile)
     symbols = sorted(set(master["symbol"]) - {benchmark})
-    if len(symbols) < 2 * RULES.top_n:
+    if len(symbols) < 2 * rules.top_n:
         raise ValueError("Asset discovery returned too few candidates; existing universe retained.")
     cache = output / "universe-refresh" / end.strftime("%Y%m%d")
     cache.mkdir(parents=True, exist_ok=True)
     atomic_text(cache / "asset-master.csv", master.to_csv(index=False))
-    print(f"Refreshing from SIP/raw daily data through {observed.date()}: {len(symbols)} candidates.", flush=True)
+    log.info("Refreshing from SIP/raw daily data through %s: %d candidates.", observed.date(), len(symbols))
     candidate_rows = []
     covered: set[str] = set()
     for offset in range(0, len(symbols), 100):
@@ -172,20 +236,29 @@ def refresh(config_path: Path, output: Path, *, now: pd.Timestamp | None = None,
                 temporary.unlink(missing_ok=True)
         bars = bars.loc[bars["timestamp"].between(start, observed)]
         covered.update(bars.loc[bars["timestamp"].eq(observed), "symbol"])
-        candidate_rows.append(monthly_candidate_rows(bars, pd.DatetimeIndex([observed]), RULES))
-        print(f"Universe data: {min(offset + 100, len(symbols))}/{len(symbols)} candidates checked.", flush=True)
+        candidate_rows.append(monthly_candidate_rows(bars, pd.DatetimeIndex([observed]), rules))
+        log.info("Universe data: %d/%d candidates checked.", min(offset + 100, len(symbols)), len(symbols))
     coverage = len(covered) / len(symbols)
     if coverage < 0.90:
         raise ValueError(f"Latest-session coverage {coverage:.1%} is below 90%; existing universe retained.")
-    selected = select_top_liquid(pd.concat(candidate_rows, ignore_index=True), RULES)
-    snapshot_date(selected)
-    check_account_membership(profile, [*selected["symbol"], benchmark])
-    if snapshot.exists() and snapshot_date(pd.read_csv(snapshot)) > observed:
+    selected = select_top_liquid(pd.concat(candidate_rows, ignore_index=True), rules)
+    snapshot_date(selected, rules.top_n)
+    if profile_rules.ownership == "guard":
+        check_account_membership(profile, [*selected["symbol"], benchmark])
+    else:
+        # The outgoing universe: the published live file and the source config's file.
+        previous: list[str] = []
+        source_file = config.get("universe", {}).get("symbols_file")
+        for candidate in [snapshot, (config_path.parent / source_file) if source_file else None]:
+            if candidate is not None and Path(candidate).is_file():
+                previous += pd.read_csv(candidate)["symbol"].astype(str).str.upper().tolist()
+        hand_off_ownership(config, [*selected["symbol"], benchmark], previous)
+    if snapshot.exists() and snapshot_date(pd.read_csv(snapshot), rules.top_n) > observed:
         raise ValueError("Refusing to replace the universe with an older observation.")
     text = selected.to_csv(index=False)
     metadata = {
         "refreshed_at": now.isoformat(), "observed_at": observed.isoformat(),
-        "effective_after": end.isoformat(), "rules": asdict(RULES),
+        "effective_after": end.isoformat(), "rules": asdict(rules), "strategy": strategy_name,
         "feed": "sip", "adjustment": "raw", "candidate_symbols": len(symbols),
         "latest_session_coverage": coverage, "selected_symbols": len(selected),
         "snapshot_sha256": sha256(text.encode()).hexdigest(),
@@ -196,5 +269,5 @@ def refresh(config_path: Path, output: Path, *, now: pd.Timestamp | None = None,
     atomic_text(cache / "manifest.json", json.dumps(metadata, indent=2) + "\n")
     atomic_text(snapshot, text)
     atomic_text(generated, generated_text)
-    print(f"Published {len(selected)} symbols observed {observed.date()}; original research snapshot preserved.", flush=True)
+    log.info("Published %d symbols observed %s; original research snapshot preserved.", len(selected), observed.date())
     return generated
