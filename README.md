@@ -24,7 +24,7 @@ The engineering problem is keeping research and paper execution consistent while
 | Design choice | Evidence |
 | --- | --- |
 | Strategies produce target weights; backtesting and paper execution consume the same contract | [Strategy protocol](src/project_geld/strategies/base.py), [backtester](src/project_geld/backtest.py) |
-| Reconcile existing orders and use deterministic client order IDs | [Paper adapter](src/project_geld/paper.py), [paper tests](tests/test_paper.py) |
+| Reconcile existing orders and use deterministic client order IDs | [Paper adapter](src/project_geld/paper/), [paper tests](tests/test_paper.py) |
 | Replace state files atomically after flushing writes | [Atomic I/O](src/project_geld/atomicio.py), [failure tests](tests/test_atomicio.py) |
 | Validate causality, costs, and candidate provenance before trusting a result | [Strategy tests](tests/test_strategies.py), [provenance tests](tests/test_candidate_provenance.py) |
 
@@ -218,6 +218,12 @@ adds positions that were stranded before the ledger existed. If the Intra V15
 shortfall kill-switch trips, it stays on until `geld reset-kill-switch` is run
 (see `docs/paper/PAPER_INTRADAY_V15.md`).
 
+To run the accounts without keeping a PC on, see `docs/CLOUD_DEPLOY.md`:
+Daily V4 runs on GitHub Actions and Intra V15 on a small Linux server, through
+the cross-platform runners `geld run-daily`, `geld run-intraday` and
+`geld run-close-check`. `geld performance-report` summarizes paper results
+against SPY together with runner health.
+
 Install the Daily V4 and Intra V15 execution tasks plus the Daily V4 close
 reconciliation task with:
 
@@ -226,7 +232,8 @@ reconciliation task with:
 The execution tasks launch at 09:25 ET. The read-only Daily V4 close task runs
 at 16:25 ET after the configured SIP delay. All ignore duplicate instances, start when available,
 and retry a failed runner. The computer must be powered on and the Windows user
-logged in.
+logged in. The PowerShell scripts call the same `geld run-*` runners as the
+server and Actions deployments.
 
 For the Intra V15 hybrid strategy, use the dedicated IEX paper configuration:
 
